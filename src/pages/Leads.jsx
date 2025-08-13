@@ -177,7 +177,7 @@ function AddLeadModal({ onClose, onSaved, currentUser }) {
     setSaving(true);
     const payload = {
       ...form,
-      user_id: currentUser?.id || null,
+      user_id: currentUser.id || null,
       next_action_date: form.next_action_date || null,
     };
     const { error } = await supabase.from("leads").insert(payload);
