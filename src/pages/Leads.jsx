@@ -10,6 +10,10 @@ const STATUS_OPTIONS = [
   { v: "Accepted",  color: "bg-emerald-100 text-emerald-800" },
   { v: "Closed",    color: "bg-zinc-200 text-zinc-700" },
   { v: "Rejected",  color: "bg-rose-100 text-rose-800" },
+  { v: "Hotkey Request",  color: "bg-rose-100 text-rose-800" },
+  { v: "Hotkeyed",      color: "bg-blue-100 text-green-800" },
+  { v: "CFA Sent",      color: "bg-blue-100 text-blue-800" },
+  { v: "No Answer",    color: "bg-zinc-200 text-zinc-700" },
 ];
 
 function pillClass(status) {
@@ -30,7 +34,6 @@ export default function LeadsPage({ currentUser, canSeeAll }) {
     let query = supabase
       .from("leads")
       .select(
-        // NOTE: address (not address1)
         "id,name,email,phone,address,status,next_action_date,created_at,landlord_name,user_id",
         { count: "exact" }
       )
@@ -157,7 +160,7 @@ function AddLeadModal({ onClose, onSaved, currentUser }) {
     name: "",
     email: "",
     phone: "",
-    address: "",           // NOTE: address (not address1)
+    address: "",
     landlord_name: "",
     status: "New",
     next_action_date: "",
@@ -167,7 +170,10 @@ function AddLeadModal({ onClose, onSaved, currentUser }) {
 
   async function save() {
     setErr("");
-    if (!form.name) { setErr("Please enter name"); return; }
+    if (!form.name) {
+      setErr("Please enter name");
+      return;
+    }
     setSaving(true);
     const payload = {
       ...form,
@@ -176,8 +182,11 @@ function AddLeadModal({ onClose, onSaved, currentUser }) {
     };
     const { error } = await supabase.from("leads").insert(payload);
     setSaving(false);
-    if (error) setErr(error.message);
-    else onSaved();
+    if (error) {
+      setErr(error.message);
+    } else {
+      onSaved();
+    }
   }
 
   return (
@@ -191,43 +200,59 @@ function AddLeadModal({ onClose, onSaved, currentUser }) {
 
         <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-4">
           <Field label="Name">
-            <input className="border rounded-lg px-3 py-2 w-full"
+            <input
+              className="border rounded-lg px-3 py-2 w-full"
               value={form.name}
-              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}/>
+              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+            />
           </Field>
           <Field label="Email">
-            <input className="border rounded-lg px-3 py-2 w-full"
+            <input
+              className="border rounded-lg px-3 py-2 w-full"
               value={form.email}
-              onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}/>
+              onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+            />
           </Field>
           <Field label="Phone">
-            <input className="border rounded-lg px-3 py-2 w-full"
+            <input
+              className="border rounded-lg px-3 py-2 w-full"
               value={form.phone}
-              onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}/>
+              onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
+            />
           </Field>
           <Field label="Address">
-            <input className="border rounded-lg px-3 py-2 w-full"
+            <input
+              className="border rounded-lg px-3 py-2 w-full"
               value={form.address}
-              onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))}/>
+              onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))}
+            />
           </Field>
           <Field label="Landlord name">
-            <input className="border rounded-lg px-3 py-2 w-full"
+            <input
+              className="border rounded-lg px-3 py-2 w-full"
               value={form.landlord_name}
-              onChange={(e) => setForm((f) => ({ ...f, landlord_name: e.target.value }))}/>
+              onChange={(e) => setForm((f) => ({ ...f, landlord_name: e.target.value }))}
+              placeholder="e.g., Mr. Patel"
+            />
           </Field>
           <Field label="Status">
-            <select className="border rounded-lg px-3 py-2 w-full"
+            <select
+              className="border rounded-lg px-3 py-2 w-full"
               value={form.status}
-              onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}>
+              onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}
+            >
               {STATUS_OPTIONS.map((s) => (
                 <option key={s.v} value={s.v}>{s.v}</option>
               ))}
             </select>
           </Field>
           <Field label="Next action date">
-            <input type="date" className="border rounded-lg px-3 py-2 w-full"
+            <input
+              type="date"
+              className="border rounded-lg px-3 py-2 w-full"
               value={form.next_action_date}
-              onChange={(e) => setForm((f) => ({ ...f, next_action_date: e.target.value }))}/>
+              onChange={(e) => setForm((f) => ({ ...f, next_action_date: e.target.value }))}
+            />
           </Field>
         </div>
 
@@ -235,8 +260,12 @@ function AddLeadModal({ onClose, onSaved, currentUser }) {
 
         <div className="p-6 pt-0 flex items-center justify-end gap-3">
           <button className="px-4 py-2 rounded-lg border" onClick={onClose}>Cancel</button>
-          <button className="px-4 py-2 rounded-lg text-white disabled:opacity-60"
-            style={{ background: "#023c3f" }} onClick={save}>
+          <button
+            className="px-4 py-2 rounded-lg text-white disabled:opacity-60"
+            style={{ background: "#023c3f" }}
+            onClick={save}
+            disabled={saving}
+          >
             {saving ? "Saving…" : "Save"}
           </button>
         </div>
