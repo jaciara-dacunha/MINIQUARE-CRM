@@ -1,214 +1,279 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "../supabase";
 
-// small helper
-const startOfMonth = (d) => new Date(d.getFullYear(), d.getMonth(), 1);
-const endOfMonth = (d) => new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59);
-const fmt = (n) => new Intl.NumberFormat().format(n);
+/* time helpers */
+const startOfMonthISO = (d = new Date()) => {
+  const x = new Date(d); x.setDate(1); x.setHours(0,0,0,0);
+  return x.toISOString();
+};
+const todayISO = () => { const d = new Date(); d.setHours(0,0,0,0); return d.toISOString(); };
+const monthsBack = (n) => {
+  const d = new Date(); d.setDate(1); d.setHours(0,0,0,0);
+  d.setMonth(d.getMonth() - n);
+  return d;
+};
 
-export default function Dashboard({ role = "user" }) {
-  const [leads, setLeads] = useState([]);
+/** format like "Aug 2025" short */
+const monthKey = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+const monthLabel = (d) => d.toLocaleString(undefined, { month: "short" });
+
+export default function Dashboard({ role = "user", currentUser, onJumpTo }) {
   const [loading, setLoading] = useState(true);
+  const [cards, setCards] = useState({ acceptedThisMonth: 0, overdue: 0, open: 0, followUp: 0 });
+  const [series, setSeries] = useState([]); // [{key,label,count}]
+  const [usersCount, setUsersCount] = useState(1); // for team/admin target sizing
 
-  // Load ALL leads the current RLS lets this user see
+  const canSeeAll = useMemo(() => ["admin", "team_leader"].includes(role), [role]);
+
+  // ---- Load dashboard metrics + chart ----
   useEffect(() => {
-    let ignore = false;
+    let alive = true;
     (async () => {
       setLoading(true);
-      const { data, error } = await supabase
+
+      // scope filter by user unless admin/team leader
+      const scope = canSeeAll ? {} : { user_id: currentUser?.id || "__none__" };
+      const from = startOfMonthISO();
+      const today = todayISO();
+
+      // KPI: Accepted this month
+      const { count: acceptedCount } = await supabase
         .from("leads")
-        .select("id,status,created_at,next_action_date");
-      if (!ignore) {
-        if (error) console.error("Dashboard load error:", error);
-        setLeads(data || []);
-        setLoading(false);
+        .select("id", { count: "exact", head: true })
+        .match(scope)
+        .gte("created_at", from)
+        .eq("status", "Accepted");
+
+      // KPI: Overdue (next_action_at < today && status != Accepted)
+      const { count: overdueCount } = await supabase
+        .from("leads")
+        .select("id", { count: "exact", head: true })
+        .match(scope)
+        .lt("next_action_at", today)
+        .neq("status", "Accepted");
+
+      // KPI: Open (not Accepted)
+      const { count: openCount } = await supabase
+        .from("leads")
+        .select("id", { count: "exact", head: true })
+        .match(scope)
+        .neq("status", "Accepted");
+
+      // KPI: Follow-Up
+      const { count: followUpCount } = await supabase
+        .from("leads")
+        .select("id", { count: "exact", head: true })
+        .match(scope)
+        .eq("status", "Follow Up");
+
+      // Chart: fetch last 6 months of Accepted and group in JS
+      const sixBack = monthsBack(5); // include current month => 6 total
+      const { data: acceptedRows } = await supabase
+        .from("leads")
+        .select("id, created_at")
+        .match(scope)
+        .eq("status", "Accepted")
+        .gte("created_at", sixBack.toISOString());
+
+      // group by YYYY-MM
+      const buckets = new Map();
+      for (let i = 5; i >= 0; i--) {
+        const m = monthsBack(i);
+        buckets.set(monthKey(m), { key: monthKey(m), label: monthLabel(m), count: 0 });
       }
-    })();
-    return () => {
-      ignore = true;
-    };
-  }, []);
-
-  // ----- Calculations --------------------------------------------------------
-  const today = new Date();
-  const monthStart = startOfMonth(today);
-  const monthEnd = endOfMonth(today);
-
-  const monthAccepted = useMemo(() => {
-    return leads.filter((l) => {
-      const created = l?.created_at ? new Date(l.created_at) : null;
-      return (
-        l?.status?.toLowerCase() === "accepted" &&
-        created &&
-        created >= monthStart &&
-        created <= monthEnd
-      );
-    }).length;
-  }, [leads]);
-
-  const overdue = useMemo(() => {
-    return leads.filter((l) => {
-      if (!l?.next_action_date) return false;
-      const next = new Date(l.next_action_date);
-      const isAccepted = (l?.status || "").toLowerCase() === "accepted";
-      return !isAccepted && next < today;
-    }).length;
-  }, [leads]);
-
-  const open = useMemo(() => {
-    const s = (x) => (x || "").toLowerCase();
-    return leads.filter((l) => !["accepted", "closed", "rejected"].includes(s(l?.status))).length;
-  }, [leads]);
-
-  const followup = useMemo(() => {
-    const s = (x) => (x || "").toLowerCase();
-    return leads.filter((l) => s(l?.status) === "follow up" || s(l?.status) === "follow-up")
-      .length;
-  }, [leads]);
-
-  // 6-month tiny trend (accepted per month, including current)
-  const last6 = useMemo(() => {
-    const buckets = [];
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
-      const from = startOfMonth(d);
-      const to = endOfMonth(d);
-      const count = leads.filter((l) => {
-        const created = l?.created_at ? new Date(l.created_at) : null;
-        return (
-          created &&
-          created >= from &&
-          created <= to &&
-          (l?.status || "").toLowerCase() === "accepted"
-        );
-      }).length;
-      buckets.push({
-        label: d.toLocaleString(undefined, { month: "short" }),
-        count,
+      (acceptedRows || []).forEach(r => {
+        const d = new Date(r.created_at);
+        const k = monthKey(d);
+        if (buckets.has(k)) buckets.get(k).count += 1;
       });
-    }
-    return buckets;
-  }, [leads]);
+      const chartSeries = Array.from(buckets.values());
 
-  // Target logic (same rules we discussed)
-  // user: 3 per user
-  // team_leader: 5 per user (we only know this viewer’s perspective -> display 5 × you)
-  // admin: 7 per user (display 7 × you)
-  const perUserTarget = role === "admin" ? 7 : role === "team_leader" ? 5 : 3;
-  const target = perUserTarget * 1; // this viewer; team totals are shown on team views
-  const progress = target > 0 ? Math.min(100, Math.round((monthAccepted / target) * 100)) : 0;
+      // Count users (for team/admin target math). If you have a team mapping, replace this.
+      let uCount = 1;
+      const { count: profCount } = await supabase
+        .from("profiles")
+        .select("id", { count: "exact", head: true })
+        .eq("role", "user");
+      if (profCount != null && profCount > 0) uCount = profCount;
 
-  // ----- UI ------------------------------------------------------------------
+      if (!alive) return;
+      setCards({
+        acceptedThisMonth: acceptedCount ?? 0,
+        overdue: overdueCount ?? 0,
+        open: openCount ?? 0,
+        followUp: followUpCount ?? 0,
+      });
+      setSeries(chartSeries);
+      setUsersCount(uCount);
+      setLoading(false);
+    })();
+    return () => { alive = false; };
+  }, [role, currentUser, canSeeAll]);
+
+  function goToLeadsQuickFilter(filter) {
+    localStorage.setItem("leads.quickFilter", JSON.stringify(filter));
+    onJumpTo?.({ status: filter?.status || null });
+  }
+
+  // ---- Target math per role ----
+  const perUserTarget = 3;  // baseline user target
+  const perUserIncentive = 5;
+  const perUserBonus = 7;
+
+  const target = role === "admin"
+    ? usersCount * 7
+    : role === "team_leader"
+      ? usersCount * 5
+      : 3;
+
+  const acceptedSoFar = cards.acceptedThisMonth || 0;
+  const progressPct = Math.min(100, Math.round((acceptedSoFar / Math.max(1, target)) * 100));
+
+  const incentiveMark = role === "user" ? perUserIncentive : usersCount * perUserIncentive;
+  const bonusMark     = role === "user" ? perUserBonus     : usersCount * perUserBonus;
+
   return (
-    <div className="p-6 md:p-8">
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-        <KpiCard title="Accepted Leads This Month" value={fmt(monthAccepted)} />
-        <KpiCard title="Overdue Cases" value="—" hint={fmt(overdue)} />
-        <KpiCard title="Open Cases" value="—" hint={fmt(open)} />
-        <KpiCard title="Follow-Up Cases" value="—" hint={fmt(followup)} />
+    <div className="p-6 space-y-8">
+      <h1 className="text-3xl font-semibold">
+        Let’s do it, <span className="text-emerald-900">{currentUser?.user_metadata?.name || "there"}</span>
+      </h1>
+
+      {/* KPI tiles */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <Tile
+          title="Accepted Leads This Month"
+          value={cards.acceptedThisMonth}
+          loading={loading}
+          onClick={() => goToLeadsQuickFilter({ type: "acceptedThisMonth", status: "Accepted", scope: canSeeAll ? "all" : "mine" })}
+        />
+        <Tile
+          title="Overdue Cases"
+          value={cards.overdue}
+          loading={loading}
+          onClick={() => goToLeadsQuickFilter({ type: "overdue", status: "Any", scope: canSeeAll ? "all" : "mine", extra: { overdue: true } })}
+        />
+        <Tile
+          title="Open Cases"
+          value={cards.open}
+          loading={loading}
+          onClick={() => goToLeadsQuickFilter({ type: "open", status: "Any", scope: canSeeAll ? "all" : "mine", extra: { open: true } })}
+        />
+        <Tile
+          title="Follow-Up Cases"
+          value={cards.followUp}
+          loading={loading}
+          onClick={() => goToLeadsQuickFilter({ type: "followup", status: "Follow Up", scope: canSeeAll ? "all" : "mine" })}
+        />
       </div>
 
-      {/* Monthly Target block */}
-      <div className="mt-8 rounded-2xl border bg-white p-6">
-        <div className="text-sm text-gray-500 mb-1">Your monthly target</div>
-        <div className="flex items-end justify-between mb-2">
-          <h3 className="text-2xl font-semibold text-teal-900">
-            {role === "admin"
-              ? "Admin target"
-              : role === "team_leader"
-              ? "Team leader target"
-              : "Your target"}{" "}
-            <span className="text-base font-normal text-gray-500">
-              ({perUserTarget} × you)
-            </span>
-          </h3>
-          <div className="text-3xl font-semibold text-teal-900">
-            {fmt(monthAccepted)} <span className="text-gray-500 text-base">/ {fmt(target)}</span>
+      {/* Last 6 months chart */}
+      <div className="rounded-2xl border p-5 bg-white">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-semibold">Accepted – last 6 months</h2>
+          {!loading && <div className="text-sm text-gray-500">Scoped: {canSeeAll ? "team-wide" : "you"}</div>}
+        </div>
+        <MiniBarChart data={series} height={160} />
+      </div>
+
+      {/* Monthly target progress */}
+      <div className="rounded-2xl border p-6 bg-white">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-sm text-gray-600">
+              Monthly Target ({canSeeAll ? "team-wide" : "per-user"})
+            </div>
+            <div className="text-2xl font-semibold" style={{ color: "#023c3f" }}>
+              {role === "admin" ? "Admin target" : role === "team_leader" ? "Team-leader target" : "Your monthly target"}{" "}
+              <span className="text-gray-500 text-base ml-2">
+                ({role === "user" ? `${perUserTarget} × you` : `${role === "admin" ? 7 : 5} × ${usersCount} users`})
+              </span>
+            </div>
+          </div>
+
+          <div className="text-right">
+            <div className="text-sm text-gray-600">Accepted this month</div>
+            <div className="text-3xl font-semibold" style={{ color: "#023c3f" }}>
+              {acceptedSoFar} <span className="text-gray-400 text-lg">/ {target}</span>
+            </div>
           </div>
         </div>
 
-        <Progress value={progress} />
-
-        <div className="flex justify-between text-xs text-gray-500 mt-2">
-          <span>0</span>
-          <span>{progress}%</span>
-          <span>{fmt(target)}</span>
-        </div>
-
-        <div className="text-sm text-gray-600 mt-3">
-          {monthAccepted >= target ? (
-            <>Nice! You’ve hit this month’s goal.</>
-          ) : (
-            <>
-              Only <b>{fmt(target - monthAccepted)}</b> more to hit this month’s goal.
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Simple last-6-months mini trend (no external charts) */}
-      <div className="mt-8 rounded-2xl border bg-white p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-teal-900">Accepted – last 6 months</h3>
-        </div>
-        <MiniBars data={last6} />
-      </div>
-
-      {loading && (
-        <div className="mt-6 text-sm text-gray-500">Loading dashboard data…</div>
-      )}
-    </div>
-  );
-}
-
-function KpiCard({ title, value, hint }) {
-  return (
-    <div className="rounded-2xl border bg-white p-6">
-      <div className="text-gray-600">{title}</div>
-      <div className="text-4xl font-semibold text-teal-900 mt-3">{value}</div>
-      {typeof hint !== "undefined" && (
-        <div className="mt-1 text-sm text-gray-500">{hint}</div>
-      )}
-    </div>
-  );
-}
-
-function Progress({ value = 0 }) {
-  return (
-    <div className="w-full h-4 rounded-full bg-teal-50 overflow-hidden">
-      <div
-        className="h-4 rounded-full"
-        style={{
-          width: `${value}%`,
-          background:
-            "linear-gradient(90deg, rgba(2,60,63,1) 0%, rgba(2,110,114,1) 100%)",
-        }}
-      />
-    </div>
-  );
-}
-
-// tiny bar chart with pure CSS
-function MiniBars({ data }) {
-  const max = Math.max(1, ...data.map((d) => d.count));
-  return (
-    <div className="grid grid-cols-6 gap-3 items-end h-36">
-      {data.map((d, idx) => (
-        <div key={idx} className="flex flex-col items-center">
+        {/* progress bar */}
+        <div className="mt-4 relative">
+          <div className="h-4 w-full bg-emerald-50 rounded-full" />
           <div
-            className="w-7 rounded-md"
-            style={{
-              height: `${(d.count / max) * 100 || 0}%`,
-              background:
-                "linear-gradient(180deg, rgba(2,110,114,1) 0%, rgba(2,60,63,1) 100%)",
-              boxShadow: "0 2px 8px rgba(2,60,63,0.2)",
-            }}
-            title={`${d.label}: ${d.count}`}
+            className="h-4 bg-emerald-600 rounded-full -mt-4 transition-all"
+            style={{ width: `${progressPct}%` }}
           />
-          <div className="text-xs text-gray-500 mt-2">{d.label}</div>
-          <div className="text-xs text-gray-700">{d.count}</div>
+          {/* markers */}
+          <Marker label="Target" value={target} current={target} total={target} color="#065f46" />
+          <Marker label="Incentive" value={incentiveMark} current={acceptedSoFar} total={target} color="#2563eb" />
+          <Marker label="Bonus" value={bonusMark} current={acceptedSoFar} total={target} color="#7c3aed" />
+          <div className="flex justify-between text-gray-500 text-sm mt-1">
+            <span>0</span><span>{progressPct}%</span><span>{target}</span>
+          </div>
         </div>
-      ))}
+
+        <div className="mt-2 text-sm text-gray-700">
+          {acceptedSoFar >= bonusMark
+            ? "🎉 Bonus achieved!"
+            : acceptedSoFar >= incentiveMark
+              ? "✨ Incentive achieved—push for bonus!"
+              : `Only ${Math.max(0, target - acceptedSoFar)} more to hit this month’s goal.`}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Tile({ title, value, loading, onClick }) {
+  return (
+    <button onClick={onClick} className="text-left rounded-2xl border p-4 bg-white hover:shadow-sm transition">
+      <div className="text-gray-600 text-sm">{title}</div>
+      <div className="text-4xl font-semibold mt-3" style={{ color: "#023c3f" }}>
+        {loading ? "—" : value}
+      </div>
+    </button>
+  );
+}
+
+/* Simple SVG bar chart: no external deps */
+function MiniBarChart({ data = [], height = 160 }) {
+  const max = Math.max(1, ...data.map(d => d.count));
+  const barW = 36, gap = 20;
+  const w = data.length * barW + (data.length - 1) * gap;
+  const h = height, padB = 26, padT = 10;
+
+  return (
+    <div className="overflow-x-auto">
+      <svg width={w} height={h} role="img" aria-label="Accepted leads by month">
+        {data.map((d, i) => {
+          const x = i * (barW + gap);
+          const barH = ((h - padB - padT) * d.count) / max;
+          const y = h - padB - barH;
+          return (
+            <g key={d.key} transform={`translate(${x},0)`}>
+              <rect x={0} y={y} width={barW} height={barH} rx="8" fill="#065f46" opacity="0.9" />
+              <text x={barW / 2} y={h - 8} textAnchor="middle" fontSize="12" fill="#64748b">
+                {d.label}
+              </text>
+              <text x={barW / 2} y={y - 6} textAnchor="middle" fontSize="12" fill="#111827">
+                {d.count}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+function Marker({ label, value, total, color }) {
+  const pct = Math.max(0, Math.min(100, (value / Math.max(1, total)) * 100));
+  return (
+    <div className="absolute -mt-5" style={{ left: `calc(${pct}% - 8px)` }}>
+      <div className="h-5 w-0.5" style={{ background: color, opacity: 0.9 }} />
+      <div className="text-xs" style={{ color }}>{label}</div>
     </div>
   );
 }
