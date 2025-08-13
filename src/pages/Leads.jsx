@@ -1,283 +1,526 @@
-// src/pages/Leads.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../supabase";
 
-const STATUS_OPTIONS = [
-  { v: "New",       color: "bg-gray-200 text-gray-700" },
-  { v: "Follow Up", color: "bg-amber-100 text-amber-800" },
-  { v: "Open",      color: "bg-blue-100 text-blue-800" },
-  { v: "Overdue",   color: "bg-red-100 text-red-700" },
-  { v: "Accepted",  color: "bg-emerald-100 text-emerald-800" },
-  { v: "Closed",    color: "bg-zinc-200 text-zinc-700" },
-  { v: "Rejected",  color: "bg-rose-100 text-rose-800" },
-  { v: "Hotkey Request",  color: "bg-rose-100 text-rose-800" },
-  { v: "Hotkeyed",      color: "bg-blue-100 text-green-800" },
-  { v: "CFA Sent",      color: "bg-blue-100 text-blue-800" },
-  { v: "No Answer",    color: "bg-zinc-200 text-zinc-700" },
+// ---- Status colors (Tailwind classes)
+const statusStyles = {
+  New: "bg-sky-100 text-sky-800",
+  "Follow Up": "bg-amber-100 text-amber-800",
+  Open: "bg-indigo-100 text-indigo-800",
+  Accepted: "bg-emerald-100 text-emerald-800",
+  Rejected: "bg-rose-100 text-rose-800",
+  "Hotkey Request": "bg-purple-100 text-purple-800",
+  Hotkeyed: "bg-fuchsia-100 text-fuchsia-800",
+  "CFA Sent": "bg-cyan-100 text-cyan-800",
+  "No Answer": "bg-stone-200 text-stone-800",
+  "Not Interested": "bg-zinc-200 text-zinc-800",
+};
+
+const allStatuses = [
+  "New",
+  "Follow Up",
+  "Open",
+  "Accepted",
+  "Rejected",
+  "Hotkey Request",
+  "Hotkeyed",
+  "CFA Sent",
+  "No Answer",
+  "Not Interested",
 ];
 
-function pillClass(status) {
-  const m = STATUS_OPTIONS.find(
-    (s) => s.v.toLowerCase() === (status || "").toLowerCase()
-  );
-  return m ? m.color : "bg-gray-100 text-gray-600";
-}
+// UK time helpers
+const fmtDateUK = (iso) =>
+  iso ? new Date(iso).toLocaleString("en-GB", { timeZone: "Europe/London" }) : "—";
 
 export default function LeadsPage({ currentUser, canSeeAll }) {
-  const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [rows, setRows] = useState([]);
   const [q, setQ] = useState("");
-  const [showAdd, setShowAdd] = useState(false);
+  const [drawer, setDrawer] = useState(null); // lead being edited
+  const [notes, setNotes] = useState([]);
+  const [noteText, setNoteText] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [reminderNote, setReminderNote] = useState("");
 
-  async function load() {
+  const scopeFilter = useMemo(
+    () => (canSeeAll ? {} : { user_id: currentUser?.id || "__none__" }),
+    [canSeeAll, currentUser]
+  );
+
+  // pick up a quick filter from Dashboard tile click
+  const [initialFilter, setInitialFilter] = useState(null);
+  useEffect(() => {
+    const raw = localStorage.getItem("leads.quickFilter");
+    if (raw) {
+      try {
+        setInitialFilter(JSON.parse(raw));
+      } catch {}
+      localStorage.removeItem("leads.quickFilter");
+    }
+  }, []);
+
+  useEffect(() => {
+    loadLeads();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, canSeeAll, currentUser]);
+
+  async function loadLeads() {
     setLoading(true);
+
+    // include profiles(name,email) if FK leads.user_id -> profiles.id exists
     let query = supabase
       .from("leads")
-      .select(
-        "id,name,email,phone,address,status,next_action_date,created_at,landlord_name,user_id",
-        { count: "exact" }
-      )
+      .select("*, profiles:profiles(name,email)")
       .order("created_at", { ascending: false });
 
-    if (!canSeeAll && currentUser?.id) query = query.eq("user_id", currentUser.id);
+    // scope by user if needed
+    if (Object.keys(scopeFilter).length) {
+      query = query.match(scopeFilter);
+    }
+
+    // apply quick filter ONCE
+    const f = initialFilter;
+    if (f?.type === "acceptedThisMonth") {
+      const d = new Date();
+      d.setDate(1);
+      d.setHours(0, 0, 0, 0);
+      query = query.eq("status", "Accepted").gte("created_at", d.toISOString());
+    } else if (f?.type === "overdue") {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      query = query.lt("next_action_at", today.toISOString()).neq("status", "Accepted");
+    } else if (f?.type === "open") {
+      query = query.neq("status", "Accepted");
+    } else if (f?.type === "followup") {
+      query = query.eq("status", "Follow Up");
+    }
+    if (initialFilter) setInitialFilter(null);
+
+    // text search
+    if (q?.trim()) {
+      const like = `%${q.trim()}%`;
+      query = query.or(
+        `name.ilike.${like},email.ilike.${like},phone.ilike.${like},address1.ilike.${like},landlord_name.ilike.${like}`
+      );
+    }
 
     const { data, error } = await query;
-    if (error) console.error(error);
-    setRows(data || []);
+    if (error) {
+      console.error("Load leads error", error);
+      setRows([]);
+    } else {
+      setRows(data || []);
+    }
     setLoading(false);
   }
 
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentUser?.id, canSeeAll]);
+  function openNewLead() {
+    setDrawer({
+      id: null,
+      name: "",
+      email: "",
+      phone: "",
+      address1: "",
+      landlord_name: "",
+      status: "New",
+      next_action_at: null, // ISO string
+      user_id: currentUser?.id || null,
+    });
+    setNotes([]);
+    setNoteText("");
+    setReminderNote("");
+    setAdding(true);
+  }
 
-  const filtered = useMemo(() => {
-    const s = q.trim().toLowerCase();
-    if (!s) return rows;
-    return rows.filter((r) =>
-      [r.name, r.email, r.phone, r.address, r.landlord_name]
-        .filter(Boolean)
-        .some((x) => String(x).toLowerCase().includes(s))
-    );
-  }, [rows, q]);
+  function openLead(lead) {
+    setDrawer(lead);
+    loadNotes(lead.id);
+    setReminderNote("");
+    setAdding(false);
+  }
+
+  async function loadNotes(leadId) {
+    const { data } = await supabase
+      .from("lead_notes")
+      .select("id,note,created_at,user_id")
+      .eq("lead_id", leadId)
+      .order("created_at", { ascending: false });
+
+    setNotes(data || []);
+  }
+
+  async function saveLead() {
+    const payload = {
+      name: drawer.name?.trim() || null,
+      email: drawer.email?.trim() || null,
+      phone: drawer.phone?.trim() || null,
+      address1: drawer.address1?.trim() || null,
+      landlord_name: drawer.landlord_name?.trim() || null,
+      status: drawer.status || "New",
+      next_action_at: drawer.next_action_at || null,
+      user_id: drawer.id ? drawer.user_id : currentUser?.id || null,
+    };
+
+    if (!drawer.id) {
+      const { data, error } = await supabase.from("leads").insert(payload).select("id");
+      if (!error) {
+        const newId = data?.[0]?.id;
+        // if a reminder note was typed, save it as a note
+        if (newId && reminderNote.trim()) {
+          await supabase.from("lead_notes").insert({
+            lead_id: newId,
+            user_id: currentUser?.id || null,
+            note: `Reminder: ${reminderNote.trim()}`,
+          });
+        }
+        setDrawer(null);
+        await loadLeads();
+      }
+    } else {
+      const { error } = await supabase.from("leads").update(payload).eq("id", drawer.id);
+      if (!error && reminderNote.trim()) {
+        await supabase.from("lead_notes").insert({
+          lead_id: drawer.id,
+          user_id: currentUser?.id || null,
+          note: `Reminder: ${reminderNote.trim()}`,
+        });
+      }
+      if (!error) {
+        await loadLeads();
+        setDrawer(null);
+      }
+    }
+  }
+
+  async function addNote() {
+    if (!drawer?.id || !noteText.trim()) return;
+    const { error } = await supabase.from("lead_notes").insert({
+      lead_id: drawer.id,
+      user_id: currentUser?.id || null,
+      note: noteText.trim(),
+    });
+    if (!error) {
+      setNoteText("");
+      await loadNotes(drawer.id);
+    }
+  }
+
+  // ---------- Reminders (popup + bell) ----------
+  const scheduled = useRef(new Set()); // lead_id set
+  const [alarm, setAlarm] = useState(null); // {lead, latestNote}
+
+  // Scan visible leads and schedule alarms for future next_action_at
+  useEffect(() => {
+    const now = Date.now();
+
+    rows.forEach((r) => {
+      if (!r.next_action_at) return;
+      // only schedule for scope user unless TL/admin wants alarms for all (here we keep it per user)
+      if (!canSeeAll && r.user_id !== currentUser?.id) return;
+
+      const t = new Date(r.next_action_at).getTime();
+      if (isNaN(t) || t <= now) return;
+
+      const key = `${r.id}:${t}`;
+      if (scheduled.current.has(key)) return;
+      scheduled.current.add(key);
+
+      const delay = t - now;
+      window.setTimeout(async () => {
+        // fetch latest note (likely the reminder note)
+        let latest = null;
+        const { data } = await supabase
+          .from("lead_notes")
+          .select("id,note,created_at")
+          .eq("lead_id", r.id)
+          .order("created_at", { ascending: false })
+          .limit(1);
+        latest = data?.[0] || null;
+
+        setAlarm({ lead: r, latestNote: latest });
+        ringBell();
+      }, Math.min(delay, 24 * 60 * 60 * 1000)); // cap at 24h to avoid huge timers
+    });
+  }, [rows, canSeeAll, currentUser]);
+
+  function ringBell() {
+    // Web Audio API beep (no file required)
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = "sine";
+      o.frequency.setValueAtTime(880, ctx.currentTime);
+      o.connect(g);
+      g.connect(ctx.destination);
+      g.gain.setValueAtTime(0.0001, ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.5, ctx.currentTime + 0.01);
+      o.start();
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 1.2);
+      o.stop(ctx.currentTime + 1.25);
+    } catch {}
+  }
 
   return (
-    <div className="p-6 md:p-8">
+    <div className="p-6">
       <div className="flex items-center justify-between mb-4">
-        <h1 className="text-2xl font-semibold text-teal-900">Leads</h1>
-        <div className="flex items-center gap-3">
+        <h1 className="text-2xl font-semibold">Leads</h1>
+
+        <div className="flex items-center gap-2">
           <input
-            className="border rounded-lg px-4 py-2 w-[320px] max-w-[60vw]"
+            className="border rounded px-3 py-2 w-[420px] max-w-[70vw]"
             placeholder="Search name, phone, email, address..."
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
-          <button
-            onClick={() => setShowAdd(true)}
-            className="px-4 py-2 rounded-xl text-white"
-            style={{ background: "#023c3f" }}
-          >
+          <button onClick={openNewLead} className="px-3 py-2 rounded text-white" style={{ background: "#023c3f" }}>
             + Add lead
           </button>
         </div>
       </div>
 
-      <div className="rounded-2xl border bg-white overflow-hidden">
+      <div className="rounded-2xl border overflow-hidden">
         <table className="w-full">
-          <thead className="bg-gray-50">
-            <tr className="text-left text-gray-600">
-              <th className="py-3 px-4">Lead</th>
-              <th className="py-3 px-4">Status</th>
-              <th className="py-3 px-4">Next action</th>
-              <th className="py-3 px-4">Address</th>
+          <thead className="bg-gray-50 text-gray-600">
+            <tr>
+              <th className="text-left p-3">Lead</th>
+              {canSeeAll && <th className="text-left p-3">Owner</th>}
+              <th className="text-left p-3">Status</th>
+              <th className="text-left p-3">Next action (UK)</th>
+              <th className="text-left p-3">Address</th>
             </tr>
           </thead>
           <tbody>
-            {loading ? (
+            {!loading && rows.length === 0 && (
               <tr>
-                <td className="py-6 px-4 text-gray-500" colSpan={4}>
-                  Loading…
-                </td>
-              </tr>
-            ) : filtered.length === 0 ? (
-              <tr>
-                <td className="py-6 px-4 text-gray-500" colSpan={4}>
+                <td className="p-5 text-gray-500" colSpan={canSeeAll ? 5 : 4}>
                   No leads.
                 </td>
               </tr>
-            ) : (
-              filtered.map((l) => (
-                <tr key={l.id} className="border-t">
-                  <td className="py-3 px-4">
-                    <div className="font-medium text-teal-900">{l.name || "—"}</div>
-                    <div className="text-sm text-gray-600">{l.email || "—"}</div>
-                    <div className="text-sm text-gray-600">{l.phone || "—"}</div>
-                    {l.landlord_name && (
-                      <div className="text-xs text-gray-500 mt-1">
-                        Landlord: {l.landlord_name}
-                      </div>
-                    )}
-                  </td>
-                  <td className="py-3 px-4">
-                    <span
-                      className={`inline-block px-3 py-1 rounded-full text-sm ${pillClass(
-                        l.status
-                      )}`}
-                    >
-                      {l.status || "—"}
-                    </span>
-                  </td>
-                  <td className="py-3 px-4 text-gray-700">
-                    {l.next_action_date
-                      ? new Date(l.next_action_date).toLocaleDateString()
-                      : "—"}
-                  </td>
-                  <td className="py-3 px-4 text-gray-700">{l.address || "—"}</td>
-                </tr>
-              ))
             )}
+            {rows.map((r) => (
+              <tr key={r.id} className="border-t hover:bg-gray-50 cursor-pointer" onClick={() => openLead(r)}>
+                <td className="p-3">
+                  <div className="font-medium">{r.name || "—"}</div>
+                  <div className="text-gray-500 text-sm">{r.email || "—"}</div>
+                  <div className="text-gray-500 text-sm">{r.phone || "—"}</div>
+                </td>
+                {canSeeAll && (
+                  <td className="p-3">
+                    <div className="text-sm">
+                      {r.profiles?.name || r.profiles?.email || "—"}
+                    </div>
+                  </td>
+                )}
+                <td className="p-3">
+                  <span
+                    className={`text-xs px-2 py-1 rounded-full ${
+                      statusStyles[r.status] || "bg-gray-100 text-gray-700"
+                    }`}
+                  >
+                    {r.status || "—"}
+                  </span>
+                </td>
+                <td className="p-3 text-gray-700">{fmtDateUK(r.next_action_at)}</td>
+                <td className="p-3">{r.address1 || "—"}</td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
 
-      {showAdd && (
-        <AddLeadModal
-          onClose={() => setShowAdd(false)}
-          onSaved={() => {
-            setShowAdd(false);
-            load();
-          }}
-          currentUser={currentUser}
-        />
+      {/* Drawer / Modal */}
+      {drawer && (
+        <div className="fixed inset-0 bg-black/30 flex items-start justify-center overflow-auto z-50">
+          <div className="bg-white rounded-2xl w-full max-w-4xl my-10 p-6">
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-semibold">{adding ? "Add lead" : "Edit lead"}</h2>
+              <button className="text-2xl" onClick={() => setDrawer(null)}>
+                ×
+              </button>
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-6 mt-6">
+              <Field label="Name">
+                <input
+                  className="border rounded px-3 py-2 w-full"
+                  value={drawer.name || ""}
+                  onChange={(e) => setDrawer({ ...drawer, name: e.target.value })}
+                />
+              </Field>
+
+              <Field label="Email">
+                <input
+                  className="border rounded px-3 py-2 w-full"
+                  value={drawer.email || ""}
+                  onChange={(e) => setDrawer({ ...drawer, email: e.target.value })}
+                />
+              </Field>
+
+              <Field label="Phone">
+                <input
+                  className="border rounded px-3 py-2 w-full"
+                  value={drawer.phone || ""}
+                  onChange={(e) => setDrawer({ ...drawer, phone: e.target.value })}
+                />
+              </Field>
+
+              <Field label="Address">
+                <input
+                  className="border rounded px-3 py-2 w-full"
+                  value={drawer.address1 || ""}
+                  onChange={(e) => setDrawer({ ...drawer, address1: e.target.value })}
+                />
+              </Field>
+
+              <Field label="Landlord name">
+                <input
+                  className="border rounded px-3 py-2 w-full"
+                  value={drawer.landlord_name || ""}
+                  onChange={(e) => setDrawer({ ...drawer, landlord_name: e.target.value })}
+                />
+              </Field>
+
+              <Field label="Status">
+                <select
+                  className="border rounded px-3 py-2 w-full"
+                  value={drawer.status || "New"}
+                  onChange={(e) => setDrawer({ ...drawer, status: e.target.value })}
+                >
+                  {allStatuses.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field label="Next action (UK time)">
+                <input
+                  type="datetime-local"
+                  className="border rounded px-3 py-2 w-full"
+                  value={
+                    drawer.next_action_at
+                      ? new Date(drawer.next_action_at).toISOString().slice(0, 16)
+                      : ""
+                  }
+                  onChange={(e) => {
+                    // value is local datetime; store ISO
+                    const val = e.target.value ? new Date(e.target.value) : null;
+                    setDrawer({ ...drawer, next_action_at: val ? val.toISOString() : null });
+                  }}
+                />
+                <div className="text-xs text-gray-500 mt-1">
+                  Shown & scheduled in UK time (Europe/London).
+                </div>
+              </Field>
+
+              <Field label="Reminder note (saved to notes when you save)">
+                <input
+                  className="border rounded px-3 py-2 w-full"
+                  placeholder="eg. Callback client about documents"
+                  value={reminderNote}
+                  onChange={(e) => setReminderNote(e.target.value)}
+                />
+              </Field>
+            </div>
+
+            <div className="mt-6 flex gap-3">
+              <button
+                className="px-4 py-2 rounded text-white"
+                style={{ background: "#023c3f" }}
+                onClick={saveLead}
+              >
+                Save
+              </button>
+              <button className="px-4 py-2 rounded border" onClick={() => setDrawer(null)}>
+                Cancel
+              </button>
+            </div>
+
+            {/* Notes & comments */}
+            {!adding && (
+              <div className="mt-10">
+                <h3 className="text-lg font-semibold mb-3">Notes & comments</h3>
+
+                {notes.length === 0 && <div className="text-gray-500 mb-4">No notes yet.</div>}
+
+                <ul className="space-y-3 mb-5">
+                  {notes.map((n) => (
+                    <li key={n.id} className="border rounded px-3 py-2">
+                      <div className="text-sm">{n.note}</div>
+                      <div className="text-xs text-gray-500 mt-1">{fmtDateUK(n.created_at)}</div>
+                    </li>
+                  ))}
+                </ul>
+
+                <div className="flex gap-2">
+                  <input
+                    className="border rounded px-3 py-2 w-full"
+                    placeholder="Add a note…"
+                    value={noteText}
+                    onChange={(e) => setNoteText(e.target.value)}
+                  />
+                  <button
+                    className="px-4 py-2 rounded text-white"
+                    style={{ background: "#023c3f" }}
+                    onClick={addNote}
+                  >
+                    Add
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       )}
-    </div>
-  );
-}
 
-function AddLeadModal({ onClose, onSaved, currentUser }) {
-  const [form, setForm] = useState({
-    name: "",
-    email: "",
-    phone: "",
-    address: "",
-    landlord_name: "",
-    status: "New",
-    next_action_date: "",
-  });
-  const [saving, setSaving] = useState(false);
-  const [err, setErr] = useState("");
-
-  async function save() {
-    setErr("");
-    if (!form.name) {
-      setErr("Please enter name");
-      return;
-    }
-    setSaving(true);
-    const payload = {
-      ...form,
-      user_id: currentUser?.id || null,
-      next_action_date: form.next_action_date || null,
-    };
-    const { error } = await supabase.from("leads").insert(payload);
-    setSaving(false);
-    if (error) {
-      setErr(error.message);
-    } else {
-      onSaved();
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50">
-      <div className="absolute inset-0 bg-black/30" onClick={onClose} />
-      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[720px] max-w-[94vw] bg-white rounded-2xl shadow-xl">
-        <div className="p-6 border-b flex items-center justify-between">
-          <h3 className="text-lg font-semibold text-teal-900">Add lead</h3>
-          <button className="text-gray-500" onClick={onClose}>✕</button>
+      {/* Reminder popup */}
+      {alarm && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60]">
+          <div className="bg-white rounded-2xl p-6 w-[520px] shadow-xl">
+            <div className="text-xl font-semibold mb-1">Reminder</div>
+            <div className="text-sm text-gray-600 mb-4">
+              {fmtDateUK(alarm.lead.next_action_at)}
+            </div>
+            <div className="border rounded p-3 mb-3">
+              <div className="font-medium">{alarm.lead.name || "Lead"}</div>
+              <div className="text-sm text-gray-600">{alarm.lead.email || alarm.lead.phone || "—"}</div>
+              <div className="mt-2 text-sm">
+                <span className="font-medium">Note: </span>
+                {alarm.latestNote?.note || "—"}
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                className="px-4 py-2 rounded border"
+                onClick={() => setAlarm(null)}
+              >
+                Dismiss
+              </button>
+              <button
+                className="px-4 py-2 rounded text-white"
+                style={{ background: "#023c3f" }}
+                onClick={() => {
+                  setAlarm(null);
+                  // open the lead for quick action
+                  openLead(alarm.lead);
+                }}
+              >
+                Open lead
+              </button>
+            </div>
+          </div>
         </div>
-
-        <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Field label="Name">
-            <input
-              className="border rounded-lg px-3 py-2 w-full"
-              value={form.name}
-              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-            />
-          </Field>
-          <Field label="Email">
-            <input
-              className="border rounded-lg px-3 py-2 w-full"
-              value={form.email}
-              onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-            />
-          </Field>
-          <Field label="Phone">
-            <input
-              className="border rounded-lg px-3 py-2 w-full"
-              value={form.phone}
-              onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
-            />
-          </Field>
-          <Field label="Address">
-            <input
-              className="border rounded-lg px-3 py-2 w-full"
-              value={form.address}
-              onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))}
-            />
-          </Field>
-          <Field label="Landlord name">
-            <input
-              className="border rounded-lg px-3 py-2 w-full"
-              value={form.landlord_name}
-              onChange={(e) => setForm((f) => ({ ...f, landlord_name: e.target.value }))}
-              placeholder="e.g., Mr. Patel"
-            />
-          </Field>
-          <Field label="Status">
-            <select
-              className="border rounded-lg px-3 py-2 w-full"
-              value={form.status}
-              onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}
-            >
-              {STATUS_OPTIONS.map((s) => (
-                <option key={s.v} value={s.v}>{s.v}</option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Next action date">
-            <input
-              type="date"
-              className="border rounded-lg px-3 py-2 w-full"
-              value={form.next_action_date}
-              onChange={(e) => setForm((f) => ({ ...f, next_action_date: e.target.value }))}
-            />
-          </Field>
-        </div>
-
-        {err && <div className="px-6 pb-2 text-sm text-red-600">{err}</div>}
-
-        <div className="p-6 pt-0 flex items-center justify-end gap-3">
-          <button className="px-4 py-2 rounded-lg border" onClick={onClose}>Cancel</button>
-          <button
-            className="px-4 py-2 rounded-lg text-white disabled:opacity-60"
-            style={{ background: "#023c3f" }}
-            onClick={save}
-            disabled={saving}
-          >
-            {saving ? "Saving…" : "Save"}
-          </button>
-        </div>
-      </div>
+      )}
     </div>
   );
 }
 
 function Field({ label, children }) {
   return (
-    <label className="text-sm">
-      <div className="text-gray-600 mb-1">{label}</div>
+    <label className="block">
+      <div className="text-sm text-gray-600 mb-1">{label}</div>
       {children}
     </label>
   );
