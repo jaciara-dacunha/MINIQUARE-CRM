@@ -3,17 +3,19 @@ import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "../supabase";
 
 const STATUS_OPTIONS = [
-  { v: "New", color: "bg-gray-200 text-gray-700" },
+  { v: "New",       color: "bg-gray-200 text-gray-700" },
   { v: "Follow Up", color: "bg-amber-100 text-amber-800" },
-  { v: "Open", color: "bg-blue-100 text-blue-800" },
-  { v: "Overdue", color: "bg-red-100 text-red-700" },
-  { v: "Accepted", color: "bg-emerald-100 text-emerald-800" },
-  { v: "Closed", color: "bg-zinc-200 text-zinc-700" },
-  { v: "Rejected", color: "bg-rose-100 text-rose-800" },
+  { v: "Open",      color: "bg-blue-100 text-blue-800" },
+  { v: "Overdue",   color: "bg-red-100 text-red-700" },
+  { v: "Accepted",  color: "bg-emerald-100 text-emerald-800" },
+  { v: "Closed",    color: "bg-zinc-200 text-zinc-700" },
+  { v: "Rejected",  color: "bg-rose-100 text-rose-800" },
 ];
 
 function pillClass(status) {
-  const m = STATUS_OPTIONS.find((s) => s.v.toLowerCase() === (status || "").toLowerCase());
+  const m = STATUS_OPTIONS.find(
+    (s) => s.v.toLowerCase() === (status || "").toLowerCase()
+  );
   return m ? m.color : "bg-gray-100 text-gray-600";
 }
 
@@ -28,7 +30,8 @@ export default function LeadsPage({ currentUser, canSeeAll }) {
     let query = supabase
       .from("leads")
       .select(
-        "id,name,email,phone,address1,status,next_action_date,created_at,landlord_name,user_id",
+        // NOTE: address (not address1)
+        "id,name,email,phone,address,status,next_action_date,created_at,landlord_name,user_id",
         { count: "exact" }
       )
       .order("created_at", { ascending: false });
@@ -50,7 +53,7 @@ export default function LeadsPage({ currentUser, canSeeAll }) {
     const s = q.trim().toLowerCase();
     if (!s) return rows;
     return rows.filter((r) =>
-      [r.name, r.email, r.phone, r.address1, r.landlord_name]
+      [r.name, r.email, r.phone, r.address, r.landlord_name]
         .filter(Boolean)
         .some((x) => String(x).toLowerCase().includes(s))
     );
@@ -127,7 +130,7 @@ export default function LeadsPage({ currentUser, canSeeAll }) {
                       ? new Date(l.next_action_date).toLocaleDateString()
                       : "—"}
                   </td>
-                  <td className="py-3 px-4 text-gray-700">{l.address1 || "—"}</td>
+                  <td className="py-3 px-4 text-gray-700">{l.address || "—"}</td>
                 </tr>
               ))
             )}
@@ -154,7 +157,7 @@ function AddLeadModal({ onClose, onSaved, currentUser }) {
     name: "",
     email: "",
     phone: "",
-    address1: "",
+    address: "",           // NOTE: address (not address1)
     landlord_name: "",
     status: "New",
     next_action_date: "",
@@ -164,24 +167,17 @@ function AddLeadModal({ onClose, onSaved, currentUser }) {
 
   async function save() {
     setErr("");
-    if (!form.name) {
-      setErr("Please enter name");
-      return;
-    }
+    if (!form.name) { setErr("Please enter name"); return; }
     setSaving(true);
     const payload = {
       ...form,
       user_id: currentUser?.id || null,
-      // handle empty next_action_date gracefully
       next_action_date: form.next_action_date || null,
     };
     const { error } = await supabase.from("leads").insert(payload);
     setSaving(false);
-    if (error) {
-      setErr(error.message);
-    } else {
-      onSaved();
-    }
+    if (error) setErr(error.message);
+    else onSaved();
   }
 
   return (
@@ -190,90 +186,57 @@ function AddLeadModal({ onClose, onSaved, currentUser }) {
       <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[720px] max-w-[94vw] bg-white rounded-2xl shadow-xl">
         <div className="p-6 border-b flex items-center justify-between">
           <h3 className="text-lg font-semibold text-teal-900">Add lead</h3>
-          <button className="text-gray-500" onClick={onClose}>
-            ✕
-          </button>
+          <button className="text-gray-500" onClick={onClose}>✕</button>
         </div>
 
         <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-4">
           <Field label="Name">
-            <input
-              className="border rounded-lg px-3 py-2 w-full"
+            <input className="border rounded-lg px-3 py-2 w-full"
               value={form.name}
-              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-            />
+              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}/>
           </Field>
           <Field label="Email">
-            <input
-              className="border rounded-lg px-3 py-2 w-full"
+            <input className="border rounded-lg px-3 py-2 w-full"
               value={form.email}
-              onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-            />
+              onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}/>
           </Field>
           <Field label="Phone">
-            <input
-              className="border rounded-lg px-3 py-2 w-full"
+            <input className="border rounded-lg px-3 py-2 w-full"
               value={form.phone}
-              onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
-            />
+              onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}/>
           </Field>
           <Field label="Address">
-            <input
-              className="border rounded-lg px-3 py-2 w-full"
-              value={form.address1}
-              onChange={(e) => setForm((f) => ({ ...f, address1: e.target.value }))}
-            />
+            <input className="border rounded-lg px-3 py-2 w-full"
+              value={form.address}
+              onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))}/>
           </Field>
-
           <Field label="Landlord name">
-            <input
-              className="border rounded-lg px-3 py-2 w-full"
+            <input className="border rounded-lg px-3 py-2 w-full"
               value={form.landlord_name}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, landlord_name: e.target.value }))
-              }
-              placeholder="e.g., Mr. Patel"
-            />
+              onChange={(e) => setForm((f) => ({ ...f, landlord_name: e.target.value }))}/>
           </Field>
-
           <Field label="Status">
-            <select
-              className="border rounded-lg px-3 py-2 w-full"
+            <select className="border rounded-lg px-3 py-2 w-full"
               value={form.status}
-              onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}
-            >
+              onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}>
               {STATUS_OPTIONS.map((s) => (
-                <option key={s.v} value={s.v}>
-                  {s.v}
-                </option>
+                <option key={s.v} value={s.v}>{s.v}</option>
               ))}
             </select>
           </Field>
-
           <Field label="Next action date">
-            <input
-              type="date"
-              className="border rounded-lg px-3 py-2 w-full"
+            <input type="date" className="border rounded-lg px-3 py-2 w-full"
               value={form.next_action_date}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, next_action_date: e.target.value }))
-              }
-            />
+              onChange={(e) => setForm((f) => ({ ...f, next_action_date: e.target.value }))}/>
           </Field>
         </div>
 
         {err && <div className="px-6 pb-2 text-sm text-red-600">{err}</div>}
 
         <div className="p-6 pt-0 flex items-center justify-end gap-3">
-          <button className="px-4 py-2 rounded-lg border" onClick={onClose}>
-            Cancel
-          </button>
-          <button
-            className="px-4 py-2 rounded-lg text-white disabled:opacity-60"
-            style={{ background: "#023c3f" }}
-            onClick={save}
-            disabled={saving}
-          >
+          <button className="px-4 py-2 rounded-lg border" onClick={onClose}>Cancel</button>
+          <button className="px-4 py-2 rounded-lg text-white disabled:opacity-60"
+            style={{ background: "#023c3f" }} onClick={save}>
             {saving ? "Saving…" : "Save"}
           </button>
         </div>
