@@ -1,76 +1,30 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { supabase } from "./supabase";
 import Dashboard from "./pages/Dashboard.jsx";
 import LeadsPage from "./pages/Leads.jsx";
 import AdminUsers from "./pages/AdminUsers.jsx";
 import "./index.css";
 
-/* -------------------------- Motivation helpers -------------------------- */
-const QUOTES = [
-  "Small steps daily beat big intentions.",
-  "Discipline is choosing what you want most over what you want now.",
-  "Momentum starts with one action. Take it.",
-  "Consistency compounds. Keep going.",
-  "Focus on the next right thing.",
-  "Win the morning, win the day.",
-  "Greatness is a habit, not an event.",
-  "You don’t need perfect — just progress.",
-  "Targets don’t move; you do.",
-  "Work hard in silence; let results speak.",
-  "Energy follows focus.",
-  "Make your future self proud.",
-  "A little more today than yesterday.",
-  "No zero days.",
-  "Show up. Ship. Improve.",
-  "Action cures anxiety.",
-  "Earn your wins.",
-  "You’re closer than you think.",
-  "Be so good they can’t ignore you.",
-  "Quality comes from quantity of attempts.",
-  "Finish strong.",
-  "Make it count.",
-  "Don’t wait for motivation — create it.",
-  "You only fail if you quit.",
-  "Be the thermostat, not the thermometer."
-];
-
-// choose a quote that doesn’t repeat within the same ISO week
-function isoWeekNumber(d = new Date()) {
-  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-  const dayNum = date.getUTCDay() || 7;
-  date.setUTCDate(date.getUTCDate() + 4 - dayNum);
-  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
-  return Math.ceil(((date - yearStart) / 86400000 + 1) / 7);
-}
-function weeklyQuote() {
-  const week = isoWeekNumber();
-  const dow = new Date().getDay(); // 0..6
-  const idx = (week * 7 + dow) % QUOTES.length;
-  return QUOTES[idx];
-}
-// simple changing background (Unsplash) – daily seed
-function dailyImageUrl() {
-  const seed = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-  // light abstract / office artwork
-  return `https://source.unsplash.com/featured/800x800/?abstract,gradient,office&sig=${seed}`;
-}
-
-/* ------------------------------- UI pieces ------------------------------ */
-function Sidebar({ active, setActive, onLogout, role }) {
-  const items = useMemo(() => {
-    const base = [
-      { key: "dashboard", label: "Dashboard" },
-      { key: "leads", label: "Leads" },
-    ];
-    if (role === "admin") base.push({ key: "users", label: "Users" });
-    return base;
-  }, [role]);
-
+function Sidebar({ active, setActive, onLogout, role, profile }) {
+  const items = [
+    { key: "dashboard", label: "Dashboard" },
+    { key: "leads", label: "Leads" },
+  ];
+  if (role === "admin") items.push({ key: "users", label: "Users" });
   return (
     <aside className="w-64 border-r h-screen p-4 bg-white flex flex-col">
       <div className="text-lg font-bold mb-4" style={{ color: "#023c3f" }}>
         MINIQUARE CRM
       </div>
+      {profile && (
+        <div className="flex items-center gap-2 mb-3">
+          <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm" style={{ background:"#023c3f" }}>
+            {profile.name?.[0]?.toUpperCase() || "U"}
+          </div>
+          <div className="font-medium">{profile.name || profile.email}</div>
+          <span className="text-emerald-600 text-lg">✓</span>
+        </div>
+      )}
       <nav className="flex flex-col gap-1">
         {items.map((it) => (
           <button
@@ -94,10 +48,41 @@ function Sidebar({ active, setActive, onLogout, role }) {
   );
 }
 
+// ---- Daily rotating login background + quote ----
+const MOTIVATION = [
+  { q: "Work hard in silence; let results speak.", a: "— Unknown" },
+  { q: "Little by little, a little becomes a lot.", a: "— Tanzanian Proverb" },
+  { q: "Do the best you can until you know better.", a: "— Maya Angelou" },
+  { q: "Success is the sum of small efforts, repeated daily.", a: "— R. Collier" },
+  { q: "Discipline equals freedom.", a: "— Jocko Willink" },
+  { q: "Action is the antidote to anxiety.", a: "— Unknown" },
+  { q: "Dream big. Start small. Act now.", a: "— Robin Sharma" },
+];
+const BG = [
+  // Unsplash images (royalty-free). Change if you prefer.
+  "https://images.unsplash.com/photo-1529336953121-ad3a9d818eb4?q=80&w=1600&auto=format&fit=crop",
+  "https://images.unsplash.com/photo-1475728017904-b712052c192a?q=80&w=1600&auto=format&fit=crop",
+  "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?q=80&w=1600&auto=format&fit=crop",
+  "https://images.unsplash.com/photo-1500534314209-a25ddb2bd429?q=80&w=1600&auto=format&fit=crop",
+  "https://images.unsplash.com/photo-1520975954732-35dd22d9381e?q=80&w=1600&auto=format&fit=crop",
+  "https://images.unsplash.com/photo-1500534623283-312aade485b7?q=80&w=1600&auto=format&fit=crop",
+  "https://images.unsplash.com/photo-1500534314210-7d3d58b9f2d8?q=80&w=1600&auto=format&fit=crop",
+];
+
+function dayIndex(len) {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), 0, 0);
+  const diff = now - start;
+  const day = Math.floor(diff / 86400000); // day of year
+  return day % len;
+}
+
 function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
+  const qi = dayIndex(MOTIVATION.length);
+  const bi = dayIndex(BG.length);
 
   async function signIn(e) {
     e.preventDefault();
@@ -106,27 +91,31 @@ function Login() {
     if (error) setErr(error.message);
   }
 
-  const quote = weeklyQuote();
-  const bg = dailyImageUrl();
-
   return (
-    <div className="min-h-screen grid md:grid-cols-2">
-      {/* Left image + quote */}
+    <div className="min-h-screen grid md:grid-cols-2 relative">
+      {/* image side */}
       <div
-        className="hidden md:flex items-center justify-center p-8 bg-cover bg-center"
-        style={{ backgroundImage: `url(${bg})` }}
+        className="hidden md:block"
+        style={{
+          backgroundImage: `url(${BG[bi]})`,
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+        }}
       >
-        <div className="backdrop-blur-sm bg-white/70 rounded-2xl p-6 max-w-sm">
-          <div className="text-sm text-gray-500">Today’s nudge</div>
-          <div className="mt-2 text-lg font-semibold" style={{ color: "#023c3f" }}>
-            {quote}
+        <div className="w-full h-full bg-black/30 flex items-end">
+          <div className="p-8 text-white max-w-lg">
+            <div className="text-xs opacity-80 mb-1">Today’s nudge</div>
+            <div className="text-2xl font-semibold leading-snug">
+              {MOTIVATION[qi].q}
+            </div>
+            <div className="opacity-70 mt-1">{MOTIVATION[qi].a}</div>
           </div>
         </div>
       </div>
 
-      {/* Right form */}
-      <div className="flex items-center justify-center p-6">
-        <form onSubmit={signIn} className="w-full max-w-md bg-white border rounded-2xl p-8 space-y-4">
+      {/* form side */}
+      <div className="flex items-center justify-center p-6 bg-white">
+        <form onSubmit={signIn} className="w-full max-w-md card p-8 space-y-4">
           <div className="flex items-center gap-3">
             <div
               className="w-10 h-10 rounded-full flex items-center justify-center text-white"
@@ -148,7 +137,6 @@ function Login() {
               className="border rounded px-3 py-2 w-full"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@company.com"
             />
           </div>
           <div>
@@ -158,29 +146,12 @@ function Login() {
               className="border rounded px-3 py-2 w-full"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
             />
           </div>
           {err && <div className="text-sm text-red-600">{err}</div>}
-          <button
-            className="w-full px-4 py-2 rounded text-white"
-            style={{ background: "#023c3f" }}
-          >
-            Login
-          </button>
-
-          {/* Forgot password */}
-          <div className="text-sm text-center">
-            <a
-              className="text-blue-700 hover:underline"
-              href="/reset-password"
-              onClick={(e) => {
-                e.preventDefault();
-                // You already wired the ResetPassword route/component earlier.
-                // If you use hash or router, navigate accordingly; otherwise leave link.
-                window.location.href = "/reset-password";
-              }}
-            >
+          <button className="btn-brand w-full">Login</button>
+          <div className="text-center">
+            <a className="text-sm text-emerald-800 underline" href="/reset-password">
               Forgot your password?
             </a>
           </div>
@@ -190,24 +161,23 @@ function Login() {
   );
 }
 
-/* ------------------------------- App root ------------------------------- */
 export default function App() {
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
   const [tab, setTab] = useState("dashboard");
-  const [profileError, setProfileError] = useState("");
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => setSession(session));
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, s) =>
-      setSession(s)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) =>
+      setSession(session)
     );
     return () => subscription.unsubscribe();
   }, []);
 
+  const [profileError, setProfileError] = useState(null);
   useEffect(() => {
     async function loadProfile() {
-      setProfileError("");
+      setProfileError(null);
       if (!session?.user) {
         setProfile(null);
         return;
@@ -220,16 +190,12 @@ export default function App() {
       if (error) {
         setProfileError(error.message);
         setProfile(null);
-        return;
+      } else {
+        setProfile(data);
       }
-      setProfile(data);
     }
     loadProfile();
   }, [session]);
-
-  async function logout() {
-    await supabase.auth.signOut();
-  }
 
   if (!session) return <Login />;
 
@@ -244,19 +210,16 @@ export default function App() {
       </div>
     );
   }
-
   if (!profile) return <div className="p-8">Loading profile…</div>;
 
-  const canSeeAll = ["admin", "team_leader"].includes(profile.role);
+  async function logout() {
+    await supabase.auth.signOut();
+  }
 
+  const canSeeAll = ["admin", "team_leader"].includes(profile.role);
   const main =
     tab === "dashboard" ? (
-      <Dashboard
-        role={profile.role}
-        onJumpTo={({ status }) => {
-          setTab("leads");
-        }}
-      />
+      <Dashboard role={profile.role} onJumpTo={() => setTab("leads")} />
     ) : tab === "leads" ? (
       <LeadsPage currentUser={session.user} canSeeAll={canSeeAll} />
     ) : tab === "users" ? (
@@ -265,27 +228,18 @@ export default function App() {
 
   return (
     <div className="h-screen w-screen flex">
-      <Sidebar active={tab} setActive={setTab} onLogout={logout} role={profile.role} />
-
+      <Sidebar
+        active={tab}
+        setActive={setTab}
+        onLogout={logout}
+        role={profile.role}
+        profile={profile}
+      />
       <main className="flex-1 overflow-auto">
-        {/* Top header: “Let’s do it, {name}” + green tick */}
-        <div className="flex items-center justify-between border-b bg-white px-4 py-3">
-          <div className="text-lg font-semibold" style={{ color: "#023c3f" }}>
-            {profile?.name ? `Let's do it, ${profile.name}!` : "Let's do it!"}{" "}
-            <span title="You’re signed in" className="ml-1 text-green-600">✔︎</span>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="text-sm text-gray-600 capitalize">{profile.role}</div>
-            <div
-              className="w-8 h-8 rounded-full flex items-center justify-center text-white"
-              style={{ background: "#023c3f" }}
-              title={profile?.email}
-            >
-              {profile?.name ? profile.name[0]?.toUpperCase() : "U"}
-            </div>
-          </div>
+        <div className="p-4 text-xl font-semibold">
+          {`Let’s do it, ${profile.name || "there"} `}
+          <span className="text-emerald-600">✓</span>
         </div>
-
         {main}
       </main>
     </div>

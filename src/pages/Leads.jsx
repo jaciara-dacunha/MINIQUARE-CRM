@@ -1,372 +1,270 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { supabase } from '../supabase';
+import React, { useEffect, useMemo, useState } from "react";
+import { supabase } from "../supabase";
 
-const STATUS_OPTIONS = [
-  'New',
-  'In Review',
-  'Follow Up',
-  'Overdue',
-  'Accepted',
-  'Hotkey request',
-  'Hotkeyed',
-  'CFA sent',
-  'CFA received',
-  'Reject',
-  'More Information required',
-];
+const STATUS_COLORS = {
+  "new": "bg-gray-100 text-gray-700",
+  "open": "bg-blue-100 text-blue-700",
+  "follow up": "bg-amber-100 text-amber-800",
+  "overdue": "bg-red-100 text-red-700",
+  "accepted": "bg-emerald-100 text-emerald-800",
+  "closed": "bg-slate-200 text-slate-700",
+  "rejected": "bg-rose-100 text-rose-700",
+};
 
-function cls(...a){ return a.filter(Boolean).join(' ') }
+function StatusBadge({ status }) {
+  const key = String(status || "").toLowerCase();
+  const cls = STATUS_COLORS[key] || "bg-gray-100 text-gray-700";
+  return (
+    <span className={`px-3 py-1 rounded-full text-sm ${cls}`}>
+      {status || "New"}
+    </span>
+  );
+}
 
 export default function LeadsPage({ currentUser, canSeeAll }) {
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [leads, setLeads] = useState([]);
-  const [owners, setOwners] = useState({}); // id -> {name,email}
-  const [q, setQ] = useState('');
+  const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(null);
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [show, setShow] = useState(false);
 
-  // Load leads, then (if admin/leader) load owner profiles in bulk
+  async function load() {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from("leads")
+      .select(
+        "id,name,email,phone,address1,status,created_at,follow_up_at,next_action_on,landlord_name,user_id"
+      )
+      .order("created_at", { ascending: false });
+    if (!error) setLeads(data || []);
+    setLoading(false);
+  }
+
   useEffect(() => {
-    let alive = true;
-    async function load() {
-      setLoading(true);
-
-      const { data: leadRows, error } = await supabase
-        .from('leads')
-        .select('id,name,email,phone,address,status,landlord_name,created_at,owner_id')
-        .order('created_at', { ascending: false });
-
-      if (!alive) return;
-      if (error) console.error(error);
-
-      const rows = leadRows || [];
-      setLeads(rows);
-
-      // Fetch owner profiles in one batch (admin/team leader only)
-      if (canSeeAll && rows.length) {
-        const ownerIds = Array.from(new Set(rows.map(r => r.owner_id).filter(Boolean)));
-        if (ownerIds.length) {
-          const { data: profs, error: perr } = await supabase
-            .from('profiles')
-            .select('id,name,email')
-            .in('id', ownerIds);
-          if (!alive) return;
-          if (perr) {
-            console.error(perr);
-            setOwners({});
-          } else {
-            const map = {};
-            (profs || []).forEach(p => { map[p.id] = { name: p.name, email: p.email }; });
-            setOwners(map);
-          }
-        } else {
-          setOwners({});
-        }
-      } else {
-        setOwners({});
-      }
-
-      setLoading(false);
-    }
     load();
-    return () => { alive = false; };
-  }, [canSeeAll]);
+  }, []);
 
   const filtered = useMemo(() => {
-    const k = q.trim().toLowerCase();
-    if (!k) return leads;
-    return leads.filter(l => {
-      const owner = owners[l.owner_id];
-      return [
-        l.name, l.email, l.phone, l.address, l.status, l.landlord_name,
-        owner?.name, owner?.email
-      ]
+    const q = query.trim().toLowerCase();
+    if (!q) return leads;
+    return leads.filter((l) =>
+      [l.name, l.email, l.phone, l.address1, l.landlord_name]
         .filter(Boolean)
-        .some(v => String(v).toLowerCase().includes(k));
-    });
-  }, [q, leads, owners]);
-
-  function openDrawer(lead) {
-    // enrich with owner for the drawer header
-    const owner = owners[lead.owner_id] || null;
-    setSelected(owner ? { ...lead, owner } : lead);
-    setDrawerOpen(true);
-  }
-
-  function onSaved(updated) {
-    // Replace in list
-    setLeads(prev => prev.map(l => (l.id === updated.id ? updated : l)));
-  }
+        .some((x) => String(x).toLowerCase().includes(q))
+    );
+  }, [leads, query]);
 
   return (
-    <div className="p-6 space-y-4">
-      <div className="flex items-center gap-3">
-        <h1 className="text-2xl font-semibold flex-1">Leads</h1>
-        <input
-          className="border rounded px-3 py-2 w-80"
-          placeholder={`Filter by name, email, phone, address, status${canSeeAll ? ', owner' : ''}…`}
-          value={q}
-          onChange={e => setQ(e.target.value)}
-        />
+    <div className="p-6">
+      <div className="flex items-center justify-between gap-4 mb-4">
+        <div className="text-2xl font-semibold">Leads</div>
+        <div className="flex-1 max-w-md">
+          <input
+            className="w-full border rounded px-3 py-2"
+            placeholder="Search name, phone, email, address…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
       </div>
 
-      <div className="border rounded overflow-hidden bg-white">
-        <table className="w-full">
-          <thead className="bg-gray-50 text-left text-sm">
+      <div className="card overflow-hidden">
+        <table className="w-full text-left">
+          <thead className="text-sm text-gray-500 border-b">
             <tr>
-              <th className="px-4 py-3">Lead</th>
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3">Created</th>
-              <th className="px-4 py-3">Address</th>
+              <th className="p-3">Lead</th>
+              <th className="p-3">Status</th>
+              <th className="p-3">Next action</th>
+              <th className="p-3">Address</th>
+              <th className="p-3 w-32"></th>
             </tr>
           </thead>
-          <tbody className="text-sm">
-            {filtered.map(l => {
-              const owner = owners[l.owner_id];
-              return (
-                <tr
-                  key={l.id}
-                  className="border-t hover:bg-gray-50 cursor-pointer"
-                  onClick={() => openDrawer(l)}
-                >
-                  <td className="px-4 py-3">
-                    <div className="font-medium">{l.name || '—'}</div>
-                    <div className="text-gray-500">{l.email || '—'}</div>
-                    <div className="text-gray-500">{l.phone || '—'}</div>
-                    {l.landlord_name && (
-                      <div className="text-gray-500">Landlord: {l.landlord_name}</div>
-                    )}
-                    {canSeeAll && (
-                      <div className="text-gray-600 mt-1">
-                        <span className="text-[11px] uppercase tracking-wide text-gray-400">
-                          Owner:
-                        </span>{' '}
-                        {owner?.name || '—'}
-                        {owner?.email ? (
-                          <span className="text-gray-400"> · {owner.email}</span>
-                        ) : null}
-                      </div>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    <span
-                      className={cls(
-                        'inline-block px-2.5 py-1 rounded-full border text-xs',
-                        l.status === 'Accepted' && 'border-green-600 text-green-700 bg-green-50',
-                        l.status === 'Overdue' && 'border-red-600 text-red-700 bg-red-50',
-                        !['Accepted', 'Overdue'].includes(l.status) &&
-                          'border-gray-300 text-gray-700 bg-gray-50'
-                      )}
-                    >
-                      {l.status || '—'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    {l.created_at ? new Date(l.created_at).toLocaleDateString() : '—'}
-                  </td>
-                  <td className="px-4 py-3">{l.address || '—'}</td>
-                </tr>
-              );
-            })}
+          <tbody>
+            {filtered.map((l) => (
+              <tr key={l.id} className="border-b last:border-0">
+                <td className="p-3">
+                  <div className="font-semibold">{l.name || "—"}</div>
+                  <div className="text-sm text-gray-500">
+                    {l.email || "—"}
+                  </div>
+                  <div className="text-sm text-gray-500">
+                    {l.phone || "—"}
+                  </div>
+                </td>
+                <td className="p-3">
+                  <StatusBadge status={l.status} />
+                </td>
+                <td className="p-3">
+                  {l.follow_up_at || l.next_action_on
+                    ? new Date(l.follow_up_at || l.next_action_on).toLocaleDateString()
+                    : "—"}
+                </td>
+                <td className="p-3">{l.address1 || "—"}</td>
+                <td className="p-3">
+                  <button
+                    className="px-3 py-1 border rounded"
+                    onClick={() => {
+                      setSelected(l);
+                      setShow(true);
+                    }}
+                  >
+                    Edit
+                  </button>
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
 
-        {!loading && filtered.length === 0 && (
-          <div className="p-4 text-sm text-gray-600">No leads.</div>
+        {filtered.length === 0 && (
+          <div className="p-3 text-sm text-gray-600">No leads.</div>
         )}
-        {loading && <div className="p-4 text-sm">Loading…</div>}
       </div>
 
-      {drawerOpen && selected && (
+      {/* Drawer */}
+      {show && (
         <LeadDrawer
-          lead={selected}
-          onClose={() => setDrawerOpen(false)}
-          onSaved={onSaved}
-          canSeeAll={canSeeAll}
+          open={show}
+          onClose={() => setShow(false)}
+          initial={selected}
+          onSaved={() => {
+            setShow(false);
+            load();
+          }}
         />
       )}
     </div>
   );
 }
 
-/* ---------------- Drawer ---------------- */
-
-function LeadDrawer({ lead, onClose, onSaved, canSeeAll }) {
-  const [form, setForm] = useState({
-    name: lead.name || '',
-    email: lead.email || '',
-    phone: lead.phone || '',
-    address: lead.address || '',
-    status: lead.status || 'New',
-    landlord_name: lead.landlord_name || '',
-  });
-
+function LeadDrawer({ open, onClose, initial, onSaved }) {
   const [saving, setSaving] = useState(false);
+  const [lead, setLead] = useState(() => ({ ...initial }));
   const [notes, setNotes] = useState([]);
-  const [note, setNote] = useState('');
-  const [loadingNotes, setLoadingNotes] = useState(false);
+  const [newNote, setNewNote] = useState("");
 
   useEffect(() => {
-    let alive = true;
-    async function loadNotes() {
-      setLoadingNotes(true);
-      const { data, error } = await supabase
-        .from('lead_notes')
-        .select('id,note,created_at,user_id')
-        .eq('lead_id', lead.id)
-        .order('created_at', { ascending: false });
-      if (!alive) return;
-      if (error) console.error(error);
+    (async () => {
+      const { data } = await supabase
+        .from("lead_notes")
+        .select("id, note, created_at, user_id")
+        .eq("lead_id", initial.id)
+        .order("created_at", { ascending: true });
       setNotes(data || []);
-      setLoadingNotes(false);
-    }
-    loadNotes();
-    return () => { alive = false; };
-  }, [lead.id]);
+    })();
+  }, [initial.id]);
 
-  function updateField(k, v) {
-    setForm(prev => ({ ...prev, [k]: v }));
-  }
-
-  async function saveLead() {
+  async function save() {
     setSaving(true);
-    const payload = {
-      name: form.name?.trim() || null,
-      email: form.email?.trim() || null,
-      phone: form.phone?.trim() || null,
-      address: form.address?.trim() || null,
-      status: form.status,
-      landlord_name: form.landlord_name?.trim() || null,
-    };
-    const { data, error } = await supabase
-      .from('leads')
-      .update(payload)
-      .eq('id', lead.id)
-      .select()
-      .maybeSingle();
+    const { error } = await supabase
+      .from("leads")
+      .update({
+        name: lead.name,
+        email: lead.email,
+        phone: lead.phone,
+        address1: lead.address1,
+        status: lead.status,
+        landlord_name: lead.landlord_name,
+        follow_up_at: lead.follow_up_at || null,
+        next_action_on: lead.next_action_on || null,
+      })
+      .eq("id", lead.id);
     setSaving(false);
-    if (error) { console.error(error); return; }
-    if (data) onSaved(data);
-    onClose();
-  }
-
-  async function changeStatus(v) {
-    setForm(prev => ({ ...prev, status: v })); // instant UI update
-    const { data, error } = await supabase
-      .from('leads')
-      .update({ status: v })
-      .eq('id', lead.id)
-      .select()
-      .maybeSingle();
-    if (error) { console.error(error); return; }
-    if (data) onSaved(data);
+    if (!error) onSaved?.();
   }
 
   async function addNote() {
-    const txt = note.trim();
-    if (!txt) return;
-    setSaving(true);
+    const text = newNote.trim();
+    if (!text) return;
     const { data, error } = await supabase
-      .from('lead_notes')
-      .insert({ lead_id: lead.id, note: txt }) // user_id auto-set by trigger
+      .from("lead_notes")
+      .insert([{ lead_id: lead.id, note: text }])
       .select()
       .single();
-    setSaving(false);
-    if (error) { console.error(error); return; }
-    setNote('');
-    setNotes(prev => [data, ...prev]); // show immediately
+    if (!error) {
+      setNotes((n) => [...n, data]);
+      setNewNote("");
+    }
   }
 
+  if (!open) return null;
   return (
-    <div className="fixed inset-0 bg-black/30 flex items-start justify-end z-50">
-      <div className="bg-white w-[720px] max-w-[95vw] h-full overflow-auto p-6 space-y-4 shadow-xl">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xl font-semibold">Edit lead</h2>
-          <button onClick={onClose} className="text-2xl leading-none">×</button>
+    <div className="fixed inset-0 z-40">
+      <div className="absolute inset-0 bg-black/30" onClick={onClose} />
+      <div className="absolute right-0 top-0 h-full w-full sm:w-[640px] bg-white shadow-xl overflow-auto">
+        <div className="p-5 border-b flex items-center justify-between">
+          <div className="text-xl font-semibold">
+            {initial ? "Edit lead" : "New lead"}
+          </div>
+          <button className="text-2xl leading-none px-2" onClick={onClose}>
+            ×
+          </button>
         </div>
 
-        {/* Owner info (admin/leader only) */}
-        {canSeeAll && lead.owner && (
-          <div className="text-sm text-gray-600 -mt-2">
-            <span className="text-[11px] uppercase tracking-wide text-gray-400">Owner:</span>{' '}
-            {lead.owner.name}
-            {lead.owner.email ? <span className="text-gray-400"> · {lead.owner.email}</span> : null}
-          </div>
-        )}
+        <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+          <Text label="Name" value={lead.name} onChange={(v) => setLead({ ...lead, name: v })} />
+          <Text label="Email" value={lead.email} onChange={(v) => setLead({ ...lead, email: v })} />
+          <Text label="Phone" value={lead.phone} onChange={(v) => setLead({ ...lead, phone: v })} />
+          <Text label="Address" value={lead.address1} onChange={(v) => setLead({ ...lead, address1: v })} />
 
-        {/* two-column form */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div>
-            <label className="block text-sm text-gray-600">Name</label>
-            <input className="border rounded px-3 py-2 w-full"
-                   value={form.name}
-                   onChange={e => updateField('name', e.target.value)} />
-          </div>
-          <div>
-            <label className="block text-sm text-gray-600">Email</label>
-            <input className="border rounded px-3 py-2 w-full"
-                   value={form.email}
-                   onChange={e => updateField('email', e.target.value)} />
-          </div>
-          <div>
-            <label className="block text-sm text-gray-600">Phone</label>
-            <input className="border rounded px-3 py-2 w-full"
-                   value={form.phone}
-                   onChange={e => updateField('phone', e.target.value)} />
-          </div>
-          <div>
-            <label className="block text-sm text-gray-600">Address</label>
-            <input className="border rounded px-3 py-2 w-full"
-                   value={form.address}
-                   onChange={e => updateField('address', e.target.value)} />
-          </div>
+          <Text
+            label="Landlord name"
+            placeholder="e.g., Mr. Patel"
+            value={lead.landlord_name}
+            onChange={(v) => setLead({ ...lead, landlord_name: v })}
+          />
 
-          {/* Landlord */}
           <div>
-            <label className="block text-sm text-gray-600">Landlord name</label>
-            <input className="border rounded px-3 py-2 w-full"
-                   placeholder="e.g., Mr. Patel"
-                   value={form.landlord_name}
-                   onChange={e => updateField('landlord_name', e.target.value)} />
-          </div>
-
-          {/* Status */}
-          <div>
-            <label className="block text-sm text-gray-600">Status</label>
+            <label className="block text-sm text-gray-600 mb-1">Status</label>
             <select
               className="border rounded px-3 py-2 w-full"
-              value={form.status}
-              onChange={e => changeStatus(e.target.value)}
+              value={lead.status || ""}
+              onChange={(e) => setLead({ ...lead, status: e.target.value })}
             >
-              {STATUS_OPTIONS.map(s => (
-                <option key={s} value={s}>{s}</option>
+              {["New","Open","Follow Up","Overdue","Accepted","Closed","Rejected"].map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
               ))}
             </select>
+            <div className="mt-2">
+              <StatusBadge status={lead.status} />
+            </div>
           </div>
+
+          <Text
+            label="Next action on"
+            type="date"
+            value={(lead.follow_up_at || lead.next_action_on || "").slice(0,10)}
+            onChange={(v) =>
+              setLead({ ...lead, follow_up_at: v, next_action_on: v })
+            }
+          />
         </div>
 
-        <div className="flex gap-2">
+        <div className="px-6 pb-4">
           <button
-            onClick={saveLead}
-            className="px-4 py-2 rounded text-white"
-            style={{ background: '#023c3f' }}
+            className="px-3 py-2 rounded text-white"
+            style={{ background: "#023c3f" }}
+            onClick={save}
             disabled={saving}
           >
-            {saving ? 'Saving…' : 'Save'}
+            {saving ? "Saving…" : "Save"}
           </button>
-          <button onClick={onClose} className="px-4 py-2 rounded border">Cancel</button>
+          <button className="ml-3 px-3 py-2 border rounded" onClick={onClose}>
+            Cancel
+          </button>
         </div>
 
         {/* Notes */}
-        <div className="pt-2">
-          <h3 className="text-lg font-semibold">Notes &amp; comments</h3>
-          {loadingNotes && <div className="text-sm p-2">Loading notes…</div>}
-          {notes.length === 0 && !loadingNotes && (
-            <div className="text-sm text-gray-600 p-2">No notes yet.</div>
+        <div className="px-6 pt-4 pb-10 border-t">
+          <div className="text-lg font-semibold mb-2">Notes & comments</div>
+          {notes.length === 0 && (
+            <div className="text-sm text-gray-500 mb-4">No notes yet.</div>
           )}
-          <div className="space-y-3 mt-2">
-            {notes.map(n => (
-              <div key={n.id} className="border rounded p-2">
+          <div className="space-y-3 mb-6">
+            {notes.map((n) => (
+              <div key={n.id} className="p-3 rounded bg-gray-50">
                 <div className="text-sm">{n.note}</div>
                 <div className="text-[11px] text-gray-500 mt-1">
                   {new Date(n.created_at).toLocaleString()}
@@ -375,25 +273,38 @@ function LeadDrawer({ lead, onClose, onSaved, canSeeAll }) {
             ))}
           </div>
 
-          <div className="mt-3 flex items-start gap-2">
+          <div className="flex items-start gap-2">
             <textarea
-              className="border rounded p-2 flex-1"
-              rows={3}
+              className="flex-1 border rounded p-2 min-h-[64px]"
               placeholder="Add a note…"
-              value={note}
-              onChange={e => setNote(e.target.value)}
+              value={newNote}
+              onChange={(e) => setNewNote(e.target.value)}
             />
             <button
+              className="px-3 py-2 rounded text-white h-[40px] mt-[12px]"
+              style={{ background: "#023c3f" }}
               onClick={addNote}
-              className="px-4 py-2 rounded text-white self-stretch"
-              style={{ background: '#023c3f' }}
-              disabled={saving || !note.trim()}
             >
               Add
             </button>
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function Text({ label, value, onChange, placeholder, type = "text" }) {
+  return (
+    <div>
+      <label className="block text-sm text-gray-600 mb-1">{label}</label>
+      <input
+        type={type}
+        className="border rounded px-3 py-2 w-full"
+        value={value || ""}
+        placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)}
+      />
     </div>
   );
 }
