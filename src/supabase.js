@@ -7,10 +7,9 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error(
     `Missing Supabase env vars.
-Make sure you have a .env or .env.local in the project root:
-
-VITE_SUPABASE_URL=...
-VITE_SUPABASE_ANON_KEY=...`
+Make sure you set these (in Vercel envs and your local .env.local):
+  VITE_SUPABASE_URL=https://<your-ref>.supabase.co
+  VITE_SUPABASE_ANON_KEY=<the long anon public JWT>`
   )
 }
 
@@ -18,8 +17,8 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     persistSession: true,
     detectSessionInUrl: true,
-    flowType: 'pkce', // good for prod
-    // If you want password reset links to land on your app, you can set:
+    flowType: 'pkce',
+    // If you send password-reset emails, uncomment and set your deployed URL:
     // redirectTo: `${window.location.origin}/reset-password`,
   },
 })
