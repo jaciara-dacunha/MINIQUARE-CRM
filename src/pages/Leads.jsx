@@ -45,8 +45,8 @@ export default function LeadsPage({ currentUser, canSeeAll }) {
   const [saving, setSaving] = useState(false);
 
   const scopeFilter = useMemo(
-    () => (canSeeAll ? {} : { user_id: currentUser?.id || "__none__" }),
-    [canSeeAll, currentUser]
+    () => (canSeeAll || !currentUser?.id ? {} : { user_id: currentUser.id }),
+    [canSeeAll, currentUser?.id]
   );
 
   // pick up a quick filter from Dashboard tile click

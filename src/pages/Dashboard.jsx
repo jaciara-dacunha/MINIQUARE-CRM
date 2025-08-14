@@ -45,13 +45,13 @@ export default function Dashboard({ role = "user", currentUser, onJumpTo }) {
         .select("id", { count: "exact", head: true })
         .match(scope)
         .lt("next_action_at", today)
-        .neq("status", "Accepted");
+        .not("status", "in", ["Accepted", "Follow Up"]);
 
       const { count: openCount } = await supabase
         .from("leads")
         .select("id", { count: "exact", head: true })
         .match(scope)
-        .neq("status", "Accepted");
+        .not('status', 'in', ['Accepted', 'Follow Up'])
 
       const { count: followUpCount } = await supabase
         .from("leads")
