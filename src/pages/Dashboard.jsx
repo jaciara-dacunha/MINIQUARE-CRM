@@ -128,6 +128,7 @@ export default function Dashboard({ role = "user", currentUser, onJumpTo }) {
     <div className="p-6 space-y-8">
       <h1 className="text-3xl font-semibold">
         Let’s do it, <span className="text-emerald-900">{currentUser?.user_metadata?.name || "there"}</span>
+        {role && <span className="ml-1 text-gray-500">({role})</span>}
       </h1>
 
       {/* KPI tiles */}
