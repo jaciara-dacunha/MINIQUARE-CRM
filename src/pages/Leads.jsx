@@ -41,6 +41,8 @@ export default function LeadsPage({ currentUser, canSeeAll }) {
   const [noteText, setNoteText] = useState("");
   const [adding, setAdding] = useState(false);
   const [reminderNote, setReminderNote] = useState("");
+  const [saveErr, setSaveErr] = useState("");
+  const [saving, setSaving] = useState(false);
 
   const scopeFilter = useMemo(
     () => (canSeeAll ? {} : { user_id: currentUser?.id || "__none__" }),
@@ -130,6 +132,7 @@ export default function LeadsPage({ currentUser, canSeeAll }) {
     setNoteText("");
     setReminderNote("");
     setAdding(true);
+    setSaveErr("");
   }
 
   function openLead(lead) {
@@ -137,6 +140,7 @@ export default function LeadsPage({ currentUser, canSeeAll }) {
     loadNotes(lead.id);
     setReminderNote("");
     setAdding(false);
+    setSaveErr("");
   }
 
   async function loadNotes(leadId) {
@@ -150,8 +154,19 @@ export default function LeadsPage({ currentUser, canSeeAll }) {
   }
 
   async function saveLead() {
+    setSaveErr("");
+    setSaving(true);
+
+    // Basic validation
+    const trimmedName = (drawer.name || "").trim();
+    if (!trimmedName) {
+      setSaveErr("Please enter a name.");
+      setSaving(false);
+      return;
+    }
+
     const payload = {
-      name: drawer.name?.trim() || null,
+      name: trimmedName,
       email: drawer.email?.trim() || null,
       phone: drawer.phone?.trim() || null,
       address1: drawer.address1?.trim() || null,
@@ -161,34 +176,58 @@ export default function LeadsPage({ currentUser, canSeeAll }) {
       user_id: drawer.id ? drawer.user_id : currentUser?.id || null,
     };
 
-    if (!drawer.id) {
-      const { data, error } = await supabase.from("leads").insert(payload).select("id");
-      if (!error) {
-        const newId = data?.[0]?.id;
-        // if a reminder note was typed, save it as a note
+    try {
+      if (!drawer.id) {
+        const { data, error } = await supabase
+          .from("leads")
+          .insert(payload)
+          .select("id")
+          .single();
+
+        if (error) {
+          console.error("Insert lead error:", error);
+          setSaveErr(error.message || "Failed to save lead (insert).");
+          setSaving(false);
+          return;
+        }
+
+        const newId = data?.id;
         if (newId && reminderNote.trim()) {
-          await supabase.from("lead_notes").insert({
+          const { error: noteErr } = await supabase.from("lead_notes").insert({
             lead_id: newId,
             user_id: currentUser?.id || null,
             note: `Reminder: ${reminderNote.trim()}`,
           });
+          if (noteErr) {
+            console.error("Insert reminder note error:", noteErr);
+          }
         }
+
         setDrawer(null);
         await loadLeads();
-      }
-    } else {
-      const { error } = await supabase.from("leads").update(payload).eq("id", drawer.id);
-      if (!error && reminderNote.trim()) {
-        await supabase.from("lead_notes").insert({
-          lead_id: drawer.id,
-          user_id: currentUser?.id || null,
-          note: `Reminder: ${reminderNote.trim()}`,
-        });
-      }
-      if (!error) {
+      } else {
+        const { error } = await supabase.from("leads").update(payload).eq("id", drawer.id);
+        if (error) {
+          console.error("Update lead error:", error);
+          setSaveErr(error.message || "Failed to save lead (update).");
+          setSaving(false);
+          return;
+        }
+        if (reminderNote.trim()) {
+          const { error: noteErr } = await supabase.from("lead_notes").insert({
+            lead_id: drawer.id,
+            user_id: currentUser?.id || null,
+            note: `Reminder: ${reminderNote.trim()}`,
+          });
+          if (noteErr) {
+            console.error("Insert reminder note error:", noteErr);
+          }
+        }
         await loadLeads();
         setDrawer(null);
       }
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -215,7 +254,6 @@ export default function LeadsPage({ currentUser, canSeeAll }) {
 
     rows.forEach((r) => {
       if (!r.next_action_at) return;
-      // only schedule for scope user unless TL/admin wants alarms for all (here we keep it per user)
       if (!canSeeAll && r.user_id !== currentUser?.id) return;
 
       const t = new Date(r.next_action_at).getTime();
@@ -227,7 +265,6 @@ export default function LeadsPage({ currentUser, canSeeAll }) {
 
       const delay = t - now;
       window.setTimeout(async () => {
-        // fetch latest note (likely the reminder note)
         let latest = null;
         const { data } = await supabase
           .from("lead_notes")
@@ -239,12 +276,11 @@ export default function LeadsPage({ currentUser, canSeeAll }) {
 
         setAlarm({ lead: r, latestNote: latest });
         ringBell();
-      }, Math.min(delay, 24 * 60 * 60 * 1000)); // cap at 24h to avoid huge timers
+      }, Math.min(delay, 24 * 60 * 60 * 1000)); // cap at 24h
     });
   }, [rows, canSeeAll, currentUser]);
 
   function ringBell() {
-    // Web Audio API beep (no file required)
     try {
       const ctx = new (window.AudioContext || window.webkitAudioContext)();
       const o = ctx.createOscillator();
@@ -340,7 +376,13 @@ export default function LeadsPage({ currentUser, canSeeAll }) {
               </button>
             </div>
 
-            <div className="grid md:grid-cols-2 gap-6 mt-6">
+            {saveErr && (
+              <div className="mt-4 mb-2 p-3 rounded bg-red-50 text-red-700 border border-red-200">
+                {saveErr}
+              </div>
+            )}
+
+            <div className="grid md:grid-cols-2 gap-6 mt-4">
               <Field label="Name">
                 <input
                   className="border rounded px-3 py-2 w-full"
@@ -405,7 +447,6 @@ export default function LeadsPage({ currentUser, canSeeAll }) {
                       : ""
                   }
                   onChange={(e) => {
-                    // value is local datetime; store ISO
                     const val = e.target.value ? new Date(e.target.value) : null;
                     setDrawer({ ...drawer, next_action_at: val ? val.toISOString() : null });
                   }}
@@ -427,11 +468,12 @@ export default function LeadsPage({ currentUser, canSeeAll }) {
 
             <div className="mt-6 flex gap-3">
               <button
-                className="px-4 py-2 rounded text-white"
+                className="px-4 py-2 rounded text-white disabled:opacity-60"
                 style={{ background: "#023c3f" }}
                 onClick={saveLead}
+                disabled={saving}
               >
-                Save
+                {saving ? "Saving…" : "Save"}
               </button>
               <button className="px-4 py-2 rounded border" onClick={() => setDrawer(null)}>
                 Cancel
@@ -492,10 +534,7 @@ export default function LeadsPage({ currentUser, canSeeAll }) {
               </div>
             </div>
             <div className="flex gap-2 justify-end">
-              <button
-                className="px-4 py-2 rounded border"
-                onClick={() => setAlarm(null)}
-              >
+              <button className="px-4 py-2 rounded border" onClick={() => setAlarm(null)}>
                 Dismiss
               </button>
               <button
@@ -503,7 +542,6 @@ export default function LeadsPage({ currentUser, canSeeAll }) {
                 style={{ background: "#023c3f" }}
                 onClick={() => {
                   setAlarm(null);
-                  // open the lead for quick action
                   openLead(alarm.lead);
                 }}
               >
