@@ -563,3 +563,31 @@ function Field({ label, children }) {
     </label>
   );
 }
+
+function LeadRow({ lead }) {
+  return (
+    <tr>
+      {/* existing cells… */}
+      {canSeeAll && (
+        <td>
+          <button
+            onClick={() => deleteLead(lead.id)}
+            className="text-red-600 hover:text-red-800"
+          >
+            Delete
+          </button>
+        </td>
+      )}
+    </tr>
+  );
+}
+
+async function deleteLead(id) {
+  if (!confirm("Are you sure you want to delete this lead?")) return;
+  const { error } = await supabase.from("leads").delete().eq("id", id);
+  if (error) {
+    console.error("Delete lead error:", error);
+  } else {
+    await loadLeads(); // refresh the list
+  }
+}
