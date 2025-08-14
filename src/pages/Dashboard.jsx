@@ -38,7 +38,6 @@ export default function Dashboard({ role = "user", currentUser, onJumpTo }) {
         .from("leads")
         .select("id", { count: "exact", head: true })
         .match(scope)
-        .gte("created_at", from)
         .eq("status", "Accepted");
 
       const { count: overdueCount } = await supabase
@@ -137,30 +136,34 @@ export default function Dashboard({ role = "user", currentUser, onJumpTo }) {
           title="Accepted Leads This Month"
           value={cards.acceptedThisMonth}
           loading={loading}
+          bgColor="#ECFDF5"      // soft green
           onClick={() => goToLeadsQuickFilter({ type: "acceptedThisMonth", status: "Accepted", scope: canSeeAll ? "all" : "mine" })}
         />
         <Tile
           title="Overdue Cases"
           value={cards.overdue}
           loading={loading}
+          bgColor="#FEF2F2"      // soft red
           onClick={() => goToLeadsQuickFilter({ type: "overdue", status: "Any", scope: canSeeAll ? "all" : "mine", extra: { overdue: true } })}
         />
         <Tile
           title="Open Cases"
           value={cards.open}
           loading={loading}
+          bgColor="#EFF6FF"      // soft blue
           onClick={() => goToLeadsQuickFilter({ type: "open", status: "Any", scope: canSeeAll ? "all" : "mine", extra: { open: true } })}
         />
         <Tile
           title="Follow-Up Cases"
           value={cards.followUp}
           loading={loading}
+          bgColor="#FFFBEB"      // soft yellow
           onClick={() => goToLeadsQuickFilter({ type: "followup", status: "Follow Up", scope: canSeeAll ? "all" : "mine" })}
         />
       </div>
 
       {/* ---- Moved UP: Monthly target progress ---- */}
-      <div className="rounded-2xl border p-6 bg-white">
+      <div className="rounded-2xl border p-6" style={{ backgroundColor: "#F0FFF4" }}>
         <div className="flex items-center justify-between">
           <div>
             <div className="text-sm text-gray-600">
@@ -208,7 +211,7 @@ export default function Dashboard({ role = "user", currentUser, onJumpTo }) {
       </div>
 
       {/* ---- Now BELOW: Last 6 months chart ---- */}
-      <div className="rounded-2xl border p-5 bg-white">
+      <div className="rounded-2xl border p-5" style={{ backgroundColor: "#F0FFF4" }}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-semibold">Accepted – last 6 months</h2>
           {!loading && <div className="text-sm text-gray-500">Scoped: {canSeeAll ? "team-wide" : "you"}</div>}
@@ -222,6 +225,7 @@ export default function Dashboard({ role = "user", currentUser, onJumpTo }) {
 function Tile({ title, value, loading, onClick }) {
   return (
     <button onClick={onClick} className="text-left rounded-2xl border p-4 bg-white hover:shadow-sm transition">
+      style={{ backgroundColor: bgColor || "white" }}
       <div className="text-gray-600 text-sm">{title}</div>
       <div className="text-4xl font-semibold mt-3" style={{ color: "#023c3f" }}>
         {loading ? "—" : value}
