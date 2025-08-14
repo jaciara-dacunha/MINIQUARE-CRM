@@ -30,7 +30,7 @@ export default function Dashboard({ role = "user", currentUser, onJumpTo }) {
     (async () => {
       setLoading(true);
 
-      const scope = canSeeAll ? {} : { user_id: currentUser?.id || "__none__" };
+      const scope = canSeeAll || !currentUser?.id ? {} : { user_id: currentUser.id };
       const from = startOfMonthISO();
       const today = todayISO();
 
@@ -136,34 +136,34 @@ export default function Dashboard({ role = "user", currentUser, onJumpTo }) {
           title="Accepted Leads This Month"
           value={cards.acceptedThisMonth}
           loading={loading}
-          bgColor="#ECFDF5"      // soft green
+          bgColor="#047857"  // dark green
           onClick={() => goToLeadsQuickFilter({ type: "acceptedThisMonth", status: "Accepted", scope: canSeeAll ? "all" : "mine" })}
         />
         <Tile
           title="Overdue Cases"
           value={cards.overdue}
           loading={loading}
-          bgColor="#FEF2F2"      // soft red
+          bgColor="#DC2626"  // dark red
           onClick={() => goToLeadsQuickFilter({ type: "overdue", status: "Any", scope: canSeeAll ? "all" : "mine", extra: { overdue: true } })}
         />
         <Tile
           title="Open Cases"
           value={cards.open}
           loading={loading}
-          bgColor="#EFF6FF"      // soft blue
+          bgColor="#2563EB"  // dark blue
           onClick={() => goToLeadsQuickFilter({ type: "open", status: "Any", scope: canSeeAll ? "all" : "mine", extra: { open: true } })}
         />
         <Tile
           title="Follow-Up Cases"
           value={cards.followUp}
           loading={loading}
-          bgColor="#FFFBEB"      // soft yellow
+          bgColor="#E2E90EFF"  // dark teal
           onClick={() => goToLeadsQuickFilter({ type: "followup", status: "Follow Up", scope: canSeeAll ? "all" : "mine" })}
         />
       </div>
 
       {/* ---- Moved UP: Monthly target progress ---- */}
-      <div className="rounded-2xl border p-6" style={{ backgroundColor: "#F0FFF4" }}>
+      <div className="rounded-2xl border p-6">
         <div className="flex items-center justify-between">
           <div>
             <div className="text-sm text-gray-600">
@@ -211,7 +211,7 @@ export default function Dashboard({ role = "user", currentUser, onJumpTo }) {
       </div>
 
       {/* ---- Now BELOW: Last 6 months chart ---- */}
-      <div className="rounded-2xl border p-5" style={{ backgroundColor: "#F0FFF4" }}>
+      <div className="rounded-2xl border p-5">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-semibold">Accepted – last 6 months</h2>
           {!loading && <div className="text-sm text-gray-500">Scoped: {canSeeAll ? "team-wide" : "you"}</div>}
@@ -230,7 +230,7 @@ function Tile({ title, value, loading, onClick, bgColor }) {
       style={{ backgroundColor: bgColor || "white" }}
     >
       <div className="text-gray-600 text-sm">{title}</div>
-      <div className="text-4xl font-semibold mt-3" style={{ color:"#023c3f" }}>
+      <div className="text-4xl font-semibold mt-3" style={textStyle}>
         {loading ? "_" : value}
       </div>
     </button>
