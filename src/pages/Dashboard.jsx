@@ -13,7 +13,7 @@ const monthsBack = (n) => {
   return d;
 };
 
-/** format like "Aug 2025" short */
+/** format like "Aug" */
 const monthKey = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
 const monthLabel = (d) => d.toLocaleString(undefined, { month: "short" });
 
@@ -25,18 +25,15 @@ export default function Dashboard({ role = "user", currentUser, onJumpTo }) {
 
   const canSeeAll = useMemo(() => ["admin", "team_leader"].includes(role), [role]);
 
-  // ---- Load dashboard metrics + chart ----
   useEffect(() => {
     let alive = true;
     (async () => {
       setLoading(true);
 
-      // scope filter by user unless admin/team leader
       const scope = canSeeAll ? {} : { user_id: currentUser?.id || "__none__" };
       const from = startOfMonthISO();
       const today = todayISO();
 
-      // KPI: Accepted this month
       const { count: acceptedCount } = await supabase
         .from("leads")
         .select("id", { count: "exact", head: true })
@@ -44,7 +41,6 @@ export default function Dashboard({ role = "user", currentUser, onJumpTo }) {
         .gte("created_at", from)
         .eq("status", "Accepted");
 
-      // KPI: Overdue (next_action_at < today && status != Accepted)
       const { count: overdueCount } = await supabase
         .from("leads")
         .select("id", { count: "exact", head: true })
@@ -52,22 +48,20 @@ export default function Dashboard({ role = "user", currentUser, onJumpTo }) {
         .lt("next_action_at", today)
         .neq("status", "Accepted");
 
-      // KPI: Open (not Accepted)
       const { count: openCount } = await supabase
         .from("leads")
         .select("id", { count: "exact", head: true })
         .match(scope)
         .neq("status", "Accepted");
 
-      // KPI: Follow-Up
       const { count: followUpCount } = await supabase
         .from("leads")
         .select("id", { count: "exact", head: true })
         .match(scope)
         .eq("status", "Follow Up");
 
-      // Chart: fetch last 6 months of Accepted and group in JS
-      const sixBack = monthsBack(5); // include current month => 6 total
+      // last 6 months accepted
+      const sixBack = monthsBack(5);
       const { data: acceptedRows } = await supabase
         .from("leads")
         .select("id, created_at")
@@ -75,7 +69,6 @@ export default function Dashboard({ role = "user", currentUser, onJumpTo }) {
         .eq("status", "Accepted")
         .gte("created_at", sixBack.toISOString());
 
-      // group by YYYY-MM
       const buckets = new Map();
       for (let i = 5; i >= 0; i--) {
         const m = monthsBack(i);
@@ -88,7 +81,7 @@ export default function Dashboard({ role = "user", currentUser, onJumpTo }) {
       });
       const chartSeries = Array.from(buckets.values());
 
-      // Count users (for team/admin target math). If you have a team mapping, replace this.
+      // count users (role=user) for team/admin target math
       let uCount = 1;
       const { count: profCount } = await supabase
         .from("profiles")
@@ -166,16 +159,7 @@ export default function Dashboard({ role = "user", currentUser, onJumpTo }) {
         />
       </div>
 
-      {/* Last 6 months chart */}
-      <div className="rounded-2xl border p-5 bg-white">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-semibold">Accepted – last 6 months</h2>
-          {!loading && <div className="text-sm text-gray-500">Scoped: {canSeeAll ? "team-wide" : "you"}</div>}
-        </div>
-        <MiniBarChart data={series} height={160} />
-      </div>
-
-      {/* Monthly target progress */}
+      {/* ---- Moved UP: Monthly target progress ---- */}
       <div className="rounded-2xl border p-6 bg-white">
         <div className="flex items-center justify-between">
           <div>
@@ -221,6 +205,15 @@ export default function Dashboard({ role = "user", currentUser, onJumpTo }) {
               ? "✨ Incentive achieved—push for bonus!"
               : `Only ${Math.max(0, target - acceptedSoFar)} more to hit this month’s goal.`}
         </div>
+      </div>
+
+      {/* ---- Now BELOW: Last 6 months chart ---- */}
+      <div className="rounded-2xl border p-5 bg-white">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-semibold">Accepted – last 6 months</h2>
+          {!loading && <div className="text-sm text-gray-500">Scoped: {canSeeAll ? "team-wide" : "you"}</div>}
+        </div>
+        <MiniBarChart data={series} height={160} />
       </div>
     </div>
   );
