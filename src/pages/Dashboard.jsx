@@ -222,13 +222,16 @@ export default function Dashboard({ role = "user", currentUser, onJumpTo }) {
   );
 }
 
-function Tile({ title, value, loading, onClick }) {
+function Tile({ title, value, loading, onClick, bgColor }) {
   return (
-    <button onClick={onClick} className="text-left rounded-2xl border p-4 bg-white hover:shadow-sm transition">
+    <button
+      onClick={onClick}
+      className="text-left rounded-2xl border p-4 hover:shadow-sm transition"
       style={{ backgroundColor: bgColor || "white" }}
+    >
       <div className="text-gray-600 text-sm">{title}</div>
-      <div className="text-4xl font-semibold mt-3" style={{ color: "#023c3f" }}>
-        {loading ? "—" : value}
+      <div className="text-4xl font-semibold mt-3" style={{ color:"#023c3f" }}>
+        {loading ? "_" : value}
       </div>
     </button>
   );
