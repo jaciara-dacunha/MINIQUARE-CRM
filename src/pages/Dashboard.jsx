@@ -133,7 +133,7 @@ export default function Dashboard({ role = "user", currentUser, onJumpTo }) {
       {/* KPI tiles */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Tile
-          title="Accepted Leads This Month"
+          title="Accepted Leads"
           value={cards.acceptedThisMonth}
           loading={loading}
           bgColor="#047857"  // dark green
@@ -157,7 +157,7 @@ export default function Dashboard({ role = "user", currentUser, onJumpTo }) {
           title="Follow-Up Cases"
           value={cards.followUp}
           loading={loading}
-          bgColor="#E2E90EFF"  // dark teal
+          bgColor="#2F4F4F"  // Dark Slate
           onClick={() => goToLeadsQuickFilter({ type: "followup", status: "Follow Up", scope: canSeeAll ? "all" : "mine" })}
         />
       </div>
@@ -223,14 +223,17 @@ export default function Dashboard({ role = "user", currentUser, onJumpTo }) {
 }
 
 function Tile({ title, value, loading, onClick, bgColor }) {
+  const isDark = bgColor && bgColor !== "white";
+  const textStyle = { color: isDark ? "#FFFFFF" : "#023c3f" };
+
   return (
     <button
       onClick={onClick}
       className="text-left rounded-2xl border p-4 hover:shadow-sm transition"
       style={{ backgroundColor: bgColor || "white" }}
     >
-      <div className="text-gray-600 text-sm">{title}</div>
-      <div className="text-4xl font-semibold mt-3" style={textStyle}>
+      <div style={textStyle} className="text-sm">{title}</div>
+      <div style={textStyle} className="text-4xl font-semibold mt-3">
         {loading ? "_" : value}
       </div>
     </button>
