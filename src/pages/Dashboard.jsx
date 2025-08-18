@@ -30,7 +30,13 @@ export default function Dashboard({ role = "user", currentUser, onJumpTo }) {
     (async () => {
       setLoading(true);
 
-      const scope = canSeeAll || !currentUser?.id ? {} : { user_id: currentUser.id };
+    // If you're NOT admin/TL and we don't have the user id yet, don't fetch with an empty scope.
+    if (!canSeeAll && !currentUser?.id) {
+     setLoading(false);
+     return;
+     }      
+
+      const scope = canSeeAll ? {} : { user_id: currentUser.id };
       const from = startOfMonthISO();
       const today = todayISO();
 
@@ -38,7 +44,9 @@ export default function Dashboard({ role = "user", currentUser, onJumpTo }) {
         .from("leads")
         .select("id", { count: "exact", head: true })
         .match(scope)
-        .eq("status", "Accepted");
+        .eq("status", "Accepted")
+        .gte("created_at", from);      // chain continues
+
 
       const { count: overdueCount } = await supabase
         .from("leads")
@@ -46,12 +54,15 @@ export default function Dashboard({ role = "user", currentUser, onJumpTo }) {
         .match(scope)
         .lt("next_action_at", today)
         .not("status", "in", ["Accepted", "Follow Up"]);
+        
 
       const { count: openCount } = await supabase
         .from("leads")
         .select("id", { count: "exact", head: true })
         .match(scope)
-        .not('status', 'in', ['Accepted', 'Follow Up'])
+        .not("status", "in", ["Accepted", "Follow Up"])
+        .or(`next_action_at.is.null,next_action_at.gte.${today}`); // today is your ISO string
+
 
       const { count: followUpCount } = await supabase
         .from("leads")
