@@ -22,52 +22,77 @@ const monthsBack = (n) => {
 };
 
 /** format like "Aug" */
-const monthKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-const monthLabel = (d) => d.toLocaleString(undefined, { month: "short" });
+const monthKey = (d) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+const monthLabel = (d) =>
+  d.toLocaleString(undefined, { month: "short" });
 
-export default function Dashboard({ role = "user", currentUser, onJumpTo }) {
+export default function Dashboard({
+  role = "user",
+  currentUser,
+  onJumpTo,
+}) {
   const [loading, setLoading] = useState(true);
-  const [cards, setCards] = useState({ acceptedThisMonth: 0, overdue: 0, open: 0, followUp: 0 });
+  const [cards, setCards] = useState({
+    acceptedThisMonth: 0,
+    overdue: 0,
+    open: 0,
+    followUp: 0,
+  });
   const [series, setSeries] = useState([]); // [{key,label,count}]
   const [usersCount, setUsersCount] = useState(1); // for team/admin target sizing
 
-  const canSeeAll = useMemo(() => ["admin", "team_leader"].includes(role), [role]);
+  const canSeeAll = useMemo(
+    () => ["admin", "team_leader"].includes(role),
+    [role]
+  );
 
   useEffect(() => {
     let alive = true;
     (async () => {
       setLoading(true);
 
-      // Avoid running counts when user id isn’t loaded (non-admins)
+      // Only fetch once user id is known (for non-admins)
       if (!canSeeAll && !currentUser?.id) {
         setLoading(false);
         return;
       }
 
+      // Always build a fresh query to avoid mutation of filters.  Each call to
+      // makeQuery() returns a new query builder scoped to the current user
+      // unless the viewer can see all leads. Without this helper, chaining
+      // methods on a shared builder (e.g. .eq/.neq) would accumulate filters
+      // across counts and result in zero values.
       const scope = canSeeAll ? {} : { user_id: currentUser.id };
+      const makeQuery = () =>
+        supabase
+          .from("leads")
+          .select("id", { count: "exact", head: true })
+          .match(scope);
+
       const today = todayISO();
       const from = startOfMonthISO();
 
-      // Base query helper to ensure consistent scope
-      const base = supabase
-        .from("leads")
-        .select("id", { count: "exact", head: true })
-        .match(scope);
+      // Accepted (all time)
+      const { count: acceptedCount } = await makeQuery().eq(
+        "status",
+        "Accepted"
+      );
 
-      // Accepted leads (all-time)
-      const { count: acceptedCount } = await base.eq("status", "Accepted");
+      // Follow up
+      const { count: followUpCount } = await makeQuery().eq(
+        "status",
+        "Follow Up"
+      );
 
-      // Follow-Up leads
-      const { count: followUpCount } = await base.eq("status", "Follow Up");
-
-      // Overdue: not accepted, not follow-up, next_action_at < today
-      const { count: overdueCount } = await base
+      // Overdue: not accepted, not follow up, next_action_at < today
+      const { count: overdueCount } = await makeQuery()
         .lt("next_action_at", today)
         .neq("status", "Accepted")
         .neq("status", "Follow Up");
 
-      // Open: not accepted, not follow-up, and NOT overdue
-      const { count: openCount } = await base
+      // Open: not accepted, not follow up, and not overdue
+      const { count: openCount } = await makeQuery()
         .neq("status", "Accepted")
         .neq("status", "Follow Up")
         .or(`next_action_at.is.null,next_action_at.gte.${today}`);
@@ -77,14 +102,18 @@ export default function Dashboard({ role = "user", currentUser, onJumpTo }) {
       const { data: acceptedRows } = await supabase
         .from("leads")
         .select("id, created_at")
-        .match(scope)
+        .match(canSeeAll ? {} : { user_id: currentUser.id })
         .eq("status", "Accepted")
         .gte("created_at", sixBack.toISOString());
 
       const buckets = new Map();
       for (let i = 5; i >= 0; i--) {
         const m = monthsBack(i);
-        buckets.set(monthKey(m), { key: monthKey(m), label: monthLabel(m), count: 0 });
+        buckets.set(monthKey(m), {
+          key: monthKey(m),
+          label: monthLabel(m),
+          count: 0,
+        });
       }
       (acceptedRows || []).forEach((r) => {
         const d = new Date(r.created_at);
@@ -123,14 +152,13 @@ export default function Dashboard({ role = "user", currentUser, onJumpTo }) {
   }
 
   // ---- Target math per role ----
-  const perUserTarget = 3; // baseline user target
+  const perUserTarget = 3;  // baseline user target
   const perUserIncentive = 5;
   const perUserBonus = 7;
 
-  const target =
-    role === "admin"
-      ? usersCount * 7
-      : role === "team_leader"
+  const target = role === "admin"
+    ? usersCount * 7
+    : role === "team_leader"
       ? usersCount * 5
       : 3;
 
@@ -138,7 +166,7 @@ export default function Dashboard({ role = "user", currentUser, onJumpTo }) {
   const progressPct = Math.min(100, Math.round((acceptedSoFar / Math.max(1, target)) * 100));
 
   const incentiveMark = role === "user" ? perUserIncentive : usersCount * perUserIncentive;
-  const bonusMark = role === "user" ? perUserBonus : usersCount * perUserBonus;
+  const bonusMark     = role === "user" ? perUserBonus     : usersCount * perUserBonus;
 
   return (
     <div className="p-6 space-y-8">
@@ -153,55 +181,29 @@ export default function Dashboard({ role = "user", currentUser, onJumpTo }) {
           title="Accepted Leads"
           value={cards.acceptedThisMonth}
           loading={loading}
-          bgColor="#047857" // dark green
-          onClick={() =>
-            goToLeadsQuickFilter({
-              type: "acceptedThisMonth",
-              status: "Accepted",
-              scope: canSeeAll ? "all" : "mine",
-            })
-          }
+          bgColor="#047857"  // dark green
+          onClick={() => goToLeadsQuickFilter({ type: "acceptedThisMonth", status: "Accepted", scope: canSeeAll ? "all" : "mine" })}
         />
         <Tile
           title="Overdue Cases"
           value={cards.overdue}
           loading={loading}
-          bgColor="#DC2626" // dark red
-          onClick={() =>
-            goToLeadsQuickFilter({
-              type: "overdue",
-              status: "Any",
-              scope: canSeeAll ? "all" : "mine",
-              extra: { overdue: true },
-            })
-          }
+          bgColor="#DC2626"  // dark red
+          onClick={() => goToLeadsQuickFilter({ type: "overdue", status: "Any", scope: canSeeAll ? "all" : "mine", extra: { overdue: true } })}
         />
         <Tile
           title="Open Cases"
           value={cards.open}
           loading={loading}
-          bgColor="#2563EB" // dark blue
-          onClick={() =>
-            goToLeadsQuickFilter({
-              type: "open",
-              status: "Any",
-              scope: canSeeAll ? "all" : "mine",
-              extra: { open: true },
-            })
-          }
+          bgColor="#2563EB"  // dark blue
+          onClick={() => goToLeadsQuickFilter({ type: "open", status: "Any", scope: canSeeAll ? "all" : "mine", extra: { open: true } })}
         />
         <Tile
-          title="Follow‑Up Cases"
+          title="Follow-Up Cases"
           value={cards.followUp}
           loading={loading}
-          bgColor="#2F4F4F" // Dark Slate
-          onClick={() =>
-            goToLeadsQuickFilter({
-              type: "followup",
-              status: "Follow Up",
-              scope: canSeeAll ? "all" : "mine",
-            })
-          }
+          bgColor="#2F4F4F"  // Dark Slate
+          onClick={() => goToLeadsQuickFilter({ type: "followup", status: "Follow Up", scope: canSeeAll ? "all" : "mine" })}
         />
       </div>
 
@@ -213,17 +215,9 @@ export default function Dashboard({ role = "user", currentUser, onJumpTo }) {
               Monthly Target ({canSeeAll ? "team-wide" : "per-user"})
             </div>
             <div className="text-2xl font-semibold" style={{ color: "#023c3f" }}>
-              {role === "admin"
-                ? "Admin target"
-                : role === "team_leader"
-                ? "Team-leader target"
-                : "Your monthly target"}{" "}
+              {role === "admin" ? "Admin target" : role === "team_leader" ? "Team-leader target" : "Your monthly target"}{" "}
               <span className="text-gray-500 text-base ml-2">
-                (
-                {role === "user"
-                  ? `${perUserTarget} × you`
-                  : `${role === "admin" ? 7 : 5} × ${usersCount} users`}
-                )
+                ({role === "user" ? `${perUserTarget} × you` : `${role === "admin" ? 7 : 5} × ${usersCount} users`})
               </span>
             </div>
           </div>
@@ -245,24 +239,10 @@ export default function Dashboard({ role = "user", currentUser, onJumpTo }) {
           />
           {/* markers */}
           <Marker label="Target" value={target} current={target} total={target} color="#065f46" />
-          <Marker
-            label="Incentive"
-            value={incentiveMark}
-            current={acceptedSoFar}
-            total={target}
-            color="#2563eb"
-          />
-          <Marker
-            label="Bonus"
-            value={bonusMark}
-            current={acceptedSoFar}
-            total={target}
-            color="#7c3aed"
-          />
+          <Marker label="Incentive" value={incentiveMark} current={acceptedSoFar} total={target} color="#2563eb" />
+          <Marker label="Bonus" value={bonusMark} current={acceptedSoFar} total={target} color="#7c3aed" />
           <div className="flex justify-between text-gray-500 text-sm mt-1">
-            <span>0</span>
-            <span>{progressPct}%</span>
-            <span>{target}</span>
+            <span>0</span><span>{progressPct}%</span><span>{target}</span>
           </div>
         </div>
 
@@ -270,8 +250,8 @@ export default function Dashboard({ role = "user", currentUser, onJumpTo }) {
           {acceptedSoFar >= bonusMark
             ? "🎉 Bonus achieved!"
             : acceptedSoFar >= incentiveMark
-            ? "✨ Incentive achieved—push for bonus!"
-            : `Only ${Math.max(0, target - acceptedSoFar)} more to hit this month’s goal.`}
+              ? "✨ Incentive achieved—push for bonus!"
+              : `Only ${Math.max(0, target - acceptedSoFar)} more to hit this month’s goal.`}
         </div>
       </div>
 
@@ -279,11 +259,7 @@ export default function Dashboard({ role = "user", currentUser, onJumpTo }) {
       <div className="rounded-2xl border p-5">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-semibold">Accepted – last 6 months</h2>
-          {!loading && (
-            <div className="text-sm text-gray-500">
-              Scoped: {canSeeAll ? "team-wide" : "you"}
-            </div>
-          )}
+          {!loading && <div className="text-sm text-gray-500">Scoped: {canSeeAll ? "team-wide" : "you"}</div>}
         </div>
         <MiniBarChart data={series} height={160} />
       </div>
@@ -301,9 +277,7 @@ function Tile({ title, value, loading, onClick, bgColor }) {
       className="text-left rounded-2xl border p-4 hover:shadow-sm transition"
       style={{ backgroundColor: bgColor || "white" }}
     >
-      <div style={textStyle} className="text-sm">
-        {title}
-      </div>
+      <div style={textStyle} className="text-sm">{title}</div>
       <div style={textStyle} className="text-4xl font-semibold mt-3">
         {loading ? "_" : value}
       </div>
@@ -313,13 +287,10 @@ function Tile({ title, value, loading, onClick, bgColor }) {
 
 /* Simple SVG bar chart: no external deps */
 function MiniBarChart({ data = [], height = 160 }) {
-  const max = Math.max(1, ...data.map((d) => d.count));
-  const barW = 36,
-    gap = 20;
+  const max = Math.max(1, ...data.map(d => d.count));
+  const barW = 36, gap = 20;
   const w = data.length * barW + (data.length - 1) * gap;
-  const h = height,
-    padB = 26,
-    padT = 10;
+  const h = height, padB = 26, padT = 10;
 
   return (
     <div className="overflow-x-auto">
@@ -334,7 +305,7 @@ function MiniBarChart({ data = [], height = 160 }) {
               <text x={barW / 2} y={h - 8} textAnchor="middle" fontSize="12" fill="#64748b">
                 {d.label}
               </text>
-                <text x={barW / 2} y={y - 6} textAnchor="middle" fontSize="12" fill="#111827">
+              <text x={barW / 2} y={y - 6} textAnchor="middle" fontSize="12" fill="#111827">
                 {d.count}
               </text>
             </g>
@@ -350,9 +321,7 @@ function Marker({ label, value, total, color }) {
   return (
     <div className="absolute -mt-5" style={{ left: `calc(${pct}% - 8px)` }}>
       <div className="h-5 w-0.5" style={{ background: color, opacity: 0.9 }} />
-      <div className="text-xs" style={{ color }}>
-        {label}
-      </div>
+      <div className="text-xs" style={{ color }}>{label}</div>
     </div>
   );
 }
