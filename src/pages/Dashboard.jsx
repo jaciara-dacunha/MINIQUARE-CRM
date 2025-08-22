@@ -58,31 +58,41 @@ export default function Dashboard({
         return;
       }
 
-      // Helper to always use correct scope
-      const base = supabase
-        .from("leads")
-        .select("id", { count: "exact", head: true })
-        .match(canSeeAll ? {} : { user_id: currentUser.id });
+      // Always build a fresh query to avoid mutation of filters.  Each call to
+      // makeQuery() returns a new query builder scoped to the current user
+      // unless the viewer can see all leads. Without this helper, chaining
+      // methods on a shared builder (e.g. .eq/.neq) would accumulate filters
+      // across counts and result in zero values.
+      const scope = canSeeAll ? {} : { user_id: currentUser.id };
+      const makeQuery = () =>
+        supabase
+          .from("leads")
+          .select("id", { count: "exact", head: true })
+          .match(scope);
 
       const today = todayISO();
       const from = startOfMonthISO();
 
       // Accepted (all time)
-      const { count: acceptedCount } = await base
-        .eq("status", "Accepted");
+      const { count: acceptedCount } = await makeQuery().eq(
+        "status",
+        "Accepted"
+      );
 
       // Follow up
-      const { count: followUpCount } = await base
-        .eq("status", "Follow Up");
+      const { count: followUpCount } = await makeQuery().eq(
+        "status",
+        "Follow Up"
+      );
 
       // Overdue: not accepted, not follow up, next_action_at < today
-      const { count: overdueCount } = await base
+      const { count: overdueCount } = await makeQuery()
         .lt("next_action_at", today)
         .neq("status", "Accepted")
         .neq("status", "Follow Up");
 
       // Open: not accepted, not follow up, and not overdue
-      const { count: openCount } = await base
+      const { count: openCount } = await makeQuery()
         .neq("status", "Accepted")
         .neq("status", "Follow Up")
         .or(`next_action_at.is.null,next_action_at.gte.${today}`);
