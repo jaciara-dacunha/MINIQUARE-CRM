@@ -56,8 +56,22 @@ export default function Dashboard({
       // Otherwise, restrict to their own leads. If we don't have the user ID yet,
       // fall back to a sentinel value that won't match any real user. This allows
       // the queries to run and return zero counts until the user ID is available.
-      const userId = currentUser?.id;
-      const scope = canSeeAll ? {} : { user_id: userId ?? "__invalid__" };
+      // Determine the user ID. If currentUser.id is undefined (which can happen
+      // when the parent component hasn’t loaded the user yet), try to retrieve
+      // the authenticated user from Supabase. This prevents the dashboard from
+      // showing zero counts simply because the user prop wasn’t provided. If
+      // neither source yields an ID, fall back to a sentinel value that won’t
+      // match any real lead, so counts remain at zero until the user is known.
+      let uid = currentUser?.id;
+      if (!uid) {
+        try {
+          const { data: { user } } = await supabase.auth.getUser();
+          uid = user?.id;
+        } catch (e) {
+          uid = undefined;
+        }
+      }
+      const scope = canSeeAll ? {} : { user_id: uid ?? "__invalid__" };
 
       // Helper: always return a new query builder scoped to the appropriate user.
       const makeQuery = () =>
