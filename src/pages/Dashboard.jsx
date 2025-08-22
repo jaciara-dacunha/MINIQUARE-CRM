@@ -3,88 +3,109 @@ import { supabase } from "../supabase";
 
 /* time helpers */
 const startOfMonthISO = (d = new Date()) => {
-  const x = new Date(d); x.setDate(1); x.setHours(0,0,0,0);
+  const x = new Date(d);
+  x.setDate(1);
+  x.setHours(0, 0, 0, 0);
   return x.toISOString();
 };
-const todayISO = () => { const d = new Date(); d.setHours(0,0,0,0); return d.toISOString(); };
+const todayISO = () => {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.toISOString();
+};
 const monthsBack = (n) => {
-  const d = new Date(); d.setDate(1); d.setHours(0,0,0,0);
+  const d = new Date();
+  d.setDate(1);
+  d.setHours(0, 0, 0, 0);
   d.setMonth(d.getMonth() - n);
   return d;
 };
 
 /** format like "Aug" */
-const monthKey = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
-const monthLabel = (d) => d.toLocaleString(undefined, { month: "short" });
+const monthKey = (d) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+const monthLabel = (d) =>
+  d.toLocaleString(undefined, { month: "short" });
 
-export default function Dashboard({ role = "user", currentUser, onJumpTo }) {
+export default function Dashboard({
+  role = "user",
+  currentUser,
+  onJumpTo,
+}) {
   const [loading, setLoading] = useState(true);
-  const [cards, setCards] = useState({ acceptedThisMonth: 0, overdue: 0, open: 0, followUp: 0 });
+  const [cards, setCards] = useState({
+    acceptedThisMonth: 0,
+    overdue: 0,
+    open: 0,
+    followUp: 0,
+  });
   const [series, setSeries] = useState([]); // [{key,label,count}]
   const [usersCount, setUsersCount] = useState(1); // for team/admin target sizing
 
-  const canSeeAll = useMemo(() => ["admin", "team_leader"].includes(role), [role]);
+  const canSeeAll = useMemo(
+    () => ["admin", "team_leader"].includes(role),
+    [role]
+  );
 
   useEffect(() => {
     let alive = true;
     (async () => {
       setLoading(true);
 
-    // If you're NOT admin/TL and we don't have the user id yet, don't fetch with an empty scope.
-    if (!canSeeAll && !currentUser?.id) {
-     setLoading(false);
-     return;
-     }      
+      // Only fetch once user id is known (for non-admins)
+      if (!canSeeAll && !currentUser?.id) {
+        setLoading(false);
+        return;
+      }
 
-      const scope = canSeeAll ? {} : { user_id: currentUser.id };
-      const from = startOfMonthISO();
+      // Helper to always use correct scope
+      const base = supabase
+        .from("leads")
+        .select("id", { count: "exact", head: true })
+        .match(canSeeAll ? {} : { user_id: currentUser.id });
+
       const today = todayISO();
+      const from = startOfMonthISO();
 
-      const { count: acceptedCount } = await supabase
-        .from("leads")
-        .select("id", { count: "exact", head: true })
-        .match(scope)
-        .eq("status", "Accepted")
-        .gte("created_at", from);      // chain continues
+      // Accepted (all time)
+      const { count: acceptedCount } = await base
+        .eq("status", "Accepted");
 
-
-      const { count: overdueCount } = await supabase
-        .from("leads")
-        .select("id", { count: "exact", head: true })
-        .match(scope)
-        .lt("next_action_at", today)
-        .not("status", "in", ["Accepted", "Follow Up"]);
-        
-
-      const { count: openCount } = await supabase
-        .from("leads")
-        .select("id", { count: "exact", head: true })
-        .match(scope)
-        .not("status", "in", ["Accepted", "Follow Up"])
-        .or(`next_action_at.is.null,next_action_at.gte.${today}`); // today is your ISO string
-
-
-      const { count: followUpCount } = await supabase
-        .from("leads")
-        .select("id", { count: "exact", head: true })
-        .match(scope)
+      // Follow up
+      const { count: followUpCount } = await base
         .eq("status", "Follow Up");
+
+      // Overdue: not accepted, not follow up, next_action_at < today
+      const { count: overdueCount } = await base
+        .lt("next_action_at", today)
+        .neq("status", "Accepted")
+        .neq("status", "Follow Up");
+
+      // Open: not accepted, not follow up, and not overdue
+      const { count: openCount } = await base
+        .neq("status", "Accepted")
+        .neq("status", "Follow Up")
+        .or(`next_action_at.is.null,next_action_at.gte.${today}`);
 
       // last 6 months accepted
       const sixBack = monthsBack(5);
       const { data: acceptedRows } = await supabase
         .from("leads")
         .select("id, created_at")
-        .match(scope)
+        .match(canSeeAll ? {} : { user_id: currentUser.id })
         .eq("status", "Accepted")
         .gte("created_at", sixBack.toISOString());
 
       const buckets = new Map();
       for (let i = 5; i >= 0; i--) {
         const m = monthsBack(i);
-        buckets.set(monthKey(m), { key: monthKey(m), label: monthLabel(m), count: 0 });
+        buckets.set(monthKey(m), {
+          key: monthKey(m),
+          label: monthLabel(m),
+          count: 0,
+        });
       }
-      (acceptedRows || []).forEach(r => {
+      (acceptedRows || []).forEach((r) => {
         const d = new Date(r.created_at);
         const k = monthKey(d);
         if (buckets.has(k)) buckets.get(k).count += 1;
@@ -110,8 +131,10 @@ export default function Dashboard({ role = "user", currentUser, onJumpTo }) {
       setUsersCount(uCount);
       setLoading(false);
     })();
-    return () => { alive = false; };
-  }, [role, currentUser, canSeeAll]);
+    return () => {
+      alive = false;
+    };
+  }, [canSeeAll, currentUser?.id]);
 
   function goToLeadsQuickFilter(filter) {
     localStorage.setItem("leads.quickFilter", JSON.stringify(filter));

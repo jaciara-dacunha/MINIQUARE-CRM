@@ -83,16 +83,22 @@ export default function LeadsPage({ currentUser, canSeeAll }) {
     // apply quick filter ONCE
     const f = initialFilter;
     if (f?.type === "acceptedThisMonth") {
-      const d = new Date();
-      d.setDate(1);
-      d.setHours(0, 0, 0, 0);
-      query = query.eq("status", "Accepted").gte("created_at", d.toISOString());
+      // Show all accepted leads (no date filter)
+      query = query.eq("status", "Accepted");
     } else if (f?.type === "overdue") {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
-      query = query.lt("next_action_at", today.toISOString()).neq("status", "Accepted");
+      query = query
+        .lt("next_action_at", today.toISOString())
+        .neq("status", "Accepted")
+        .neq("status", "Follow Up");
     } else if (f?.type === "open") {
-      query = query.neq("status", "Accepted");
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      query = query
+        .neq("status", "Accepted")
+        .neq("status", "Follow Up")
+        .or(`next_action_at.is.null,next_action_at.gte.${today.toISOString()}`);
     } else if (f?.type === "followup") {
       query = query.eq("status", "Follow Up");
     }
@@ -231,6 +237,24 @@ export default function LeadsPage({ currentUser, canSeeAll }) {
     }
   }
 
+  // Delete a lead (admins/team leaders only). Define this inside LeadsPage so it
+  // can access loadLeads() from closure. Only admins or team leaders (canSeeAll)
+  // will see the delete button in the table below.
+  async function deleteLead(id) {
+    // Ask for confirmation before deleting a lead.
+    if (!confirm("Are you sure you want to delete this lead?")) return;
+    const { error } = await supabase
+      .from("leads")
+      .delete()
+      .eq("id", id);
+    if (error) {
+      console.error("Delete lead error:", error);
+    } else {
+      // Refresh the leads list after deletion
+      await loadLeads();
+    }
+  }
+
   async function addNote() {
     if (!drawer?.id || !noteText.trim()) return;
     const { error } = await supabase.from("lead_notes").insert({
@@ -324,12 +348,13 @@ export default function LeadsPage({ currentUser, canSeeAll }) {
               <th className="text-left p-3">Status</th>
               <th className="text-left p-3">Next action (UK)</th>
               <th className="text-left p-3">Address</th>
+              {canSeeAll && <th className="text-left p-3">Action</th>}
             </tr>
           </thead>
           <tbody>
             {!loading && rows.length === 0 && (
               <tr>
-                <td className="p-5 text-gray-500" colSpan={canSeeAll ? 5 : 4}>
+                <td className="p-5 text-gray-500" colSpan={canSeeAll ? 6 : 4}>
                   No leads.
                 </td>
               </tr>
@@ -359,6 +384,16 @@ export default function LeadsPage({ currentUser, canSeeAll }) {
                 </td>
                 <td className="p-3 text-gray-700">{fmtDateUK(r.next_action_at)}</td>
                 <td className="p-3">{r.address1 || "—"}</td>
+                {canSeeAll && (
+                  <td className="p-3" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      className="text-red-600 hover:text-red-800"
+                      onClick={() => deleteLead(r.id)}
+                    >
+                      Delete
+                    </button>
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>
@@ -481,38 +516,36 @@ export default function LeadsPage({ currentUser, canSeeAll }) {
             </div>
 
             {/* Notes & comments */}
-            {!adding && (
-              <div className="mt-10">
-                <h3 className="text-lg font-semibold mb-3">Notes & comments</h3>
+            <div className="mt-10">
+              <h3 className="text-lg font-semibold mb-3">Notes & comments</h3>
 
-                {notes.length === 0 && <div className="text-gray-500 mb-4">No notes yet.</div>}
+              {notes.length === 0 && <div className="text-gray-500 mb-4">No notes yet.</div>}
 
-                <ul className="space-y-3 mb-5">
-                  {notes.map((n) => (
-                    <li key={n.id} className="border rounded px-3 py-2">
-                      <div className="text-sm">{n.note}</div>
-                      <div className="text-xs text-gray-500 mt-1">{fmtDateUK(n.created_at)}</div>
-                    </li>
-                  ))}
-                </ul>
+              <ul className="space-y-3 mb-5">
+                {notes.map((n) => (
+                  <li key={n.id} className="border rounded px-3 py-2">
+                    <div className="text-sm">{n.note}</div>
+                    <div className="text-xs text-gray-500 mt-1">{fmtDateUK(n.created_at)}</div>
+                  </li>
+                ))}
+              </ul>
 
-                <div className="flex gap-2">
-                  <input
-                    className="border rounded px-3 py-2 w-full"
-                    placeholder="Add a note…"
-                    value={noteText}
-                    onChange={(e) => setNoteText(e.target.value)}
-                  />
-                  <button
-                    className="px-4 py-2 rounded text-white"
-                    style={{ background: "#023c3f" }}
-                    onClick={addNote}
-                  >
-                    Add
-                  </button>
-                </div>
+              <div className="flex gap-2">
+                <input
+                  className="border rounded px-3 py-2 w-full"
+                  placeholder="Add a note…"
+                  value={noteText}
+                  onChange={(e) => setNoteText(e.target.value)}
+                />
+                <button
+                  className="px-4 py-2 rounded text-white"
+                  style={{ background: "#023c3f" }}
+                  onClick={addNote}
+                >
+                  Add
+                </button>
               </div>
-            )}
+            </div>
           </div>
         </div>
       )}
@@ -562,32 +595,4 @@ function Field({ label, children }) {
       {children}
     </label>
   );
-}
-
-function LeadRow({ lead }) {
-  return (
-    <tr>
-      {/* existing cells… */}
-      {canSeeAll && (
-        <td>
-          <button
-            onClick={() => deleteLead(lead.id)}
-            className="text-red-600 hover:text-red-800"
-          >
-            Delete
-          </button>
-        </td>
-      )}
-    </tr>
-  );
-}
-
-async function deleteLead(id) {
-  if (!confirm("Are you sure you want to delete this lead?")) return;
-  const { error } = await supabase.from("leads").delete().eq("id", id);
-  if (error) {
-    console.error("Delete lead error:", error);
-  } else {
-    await loadLeads(); // refresh the list
-  }
 }
