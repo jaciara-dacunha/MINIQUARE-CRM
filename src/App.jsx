@@ -219,13 +219,15 @@ export default function App() {
   }
 
   const canSeeAll = ["admin", "team_leader"].includes(profile.role);
+  // Determine which page to render based on active tab
   const main =
     tab === "dashboard" ? (
       <Dashboard role={profile.role} onJumpTo={() => setTab("leads")} />
     ) : tab === "leads" ? (
       <LeadsPage currentUser={session.user} canSeeAll={canSeeAll} />
     ) : tab === "users" ? (
-      <AdminUsers />
+      // Render UsersPage for admins to manage users
+      <UsersPage role={profile.role} />
     ) : null;
 
   return (
