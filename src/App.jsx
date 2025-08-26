@@ -163,6 +163,29 @@ function Login() {
   );
 }
 
+// At the top of App.jsx with your other imports
+import ResetPassword from "./pages/ResetPassword.jsx";
+
+// ...
+
+export default function App() {
+  // existing hooks and state
+  const [session, setSession] = useState(null);
+  const [profile, setProfile] = useState(null);
+  const [tab, setTab] = useState("dashboard");
+
+  // Handle password‑reset route before anything else
+  if (window.location.pathname === "/reset-password") {
+    return <ResetPassword onDone={() => (window.location.href = "/")} />;
+  }
+
+  useEffect(() => {
+    // existing session logic
+  }, []);
+
+  // ... rest of the component
+}
+
 export default function App() {
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
