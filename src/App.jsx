@@ -222,12 +222,12 @@ export default function App() {
   // Determine which page to render based on active tab
   const main =
     tab === "dashboard" ? (
-      <Dashboard role={profile.role} onJumpTo={() => setTab("leads")} />
+      <Dashboard role={profile.role} currentUser={profile} onJumpTo={() => setTab("leads")} />
     ) : tab === "leads" ? (
-      <LeadsPage currentUser={session.user} canSeeAll={canSeeAll} />
+      <LeadsPage role={profile.role} currentUser={profile} />
     ) : tab === "users" ? (
       // Render UsersPage for admins to manage users
-      <UsersPage role={profile.role} />
+      <AdminUsers />
     ) : null;
 
   return (
