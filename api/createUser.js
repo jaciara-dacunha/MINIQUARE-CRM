@@ -11,16 +11,14 @@ export default async function handler(req, res) {
   }
   const { email, password, name, role } = req.body;
   try {
-    const { data: { user }, error: createError } = await supabaseAdmin.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-    });
+    const { data: { user }, error: createError } =
+      await supabaseAdmin.auth.admin.createUser({ email, password, email_confirm: true });
     if (createError) throw createError;
-    const { error: profileError } = await supabaseAdmin
-      .from('profiles')
-      .insert({ id: user.id, name, role });
+
+    const { error: profileError } =
+      await supabaseAdmin.from('profiles').insert({ id: user.id, name, role });
     if (profileError) throw profileError;
+
     return res.status(200).json({ user });
   } catch (error) {
     return res.status(500).json({ error: error.message });
