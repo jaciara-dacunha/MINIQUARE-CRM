@@ -4,6 +4,8 @@ import Dashboard from "./pages/Dashboard.jsx";
 import LeadsPage from "./pages/Leads.jsx";
 import AdminUsers from "./pages/AdminUsers.jsx";
 import "./index.css";
+import UsersPage from './pages/Users.jsx';
+
 
 function Sidebar({ active, setActive, onLogout, role, profile }) {
   const items = [
